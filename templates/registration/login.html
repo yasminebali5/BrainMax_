@@ -1,0 +1,13 @@
+{% extends 'auth_base.html' %}{% load static %}{% block title %}Log In{% endblock %}
+{% block auth_content %}
+<div class="auth-heading"><span class="mobile-auth-logo">BrainMax</span><h2>Welcome back</h2><p>Pick up your progress right where you left off.</p></div>
+{% if form.non_field_errors %}<div class="alert alert-danger" role="alert">{{ form.non_field_errors.0 }}</div>{% endif %}
+{% if messages %}<div class="messages">{% for message in messages %}<div class="alert alert-success">{{ message }}</div>{% endfor %}</div>{% endif %}
+<form method="post" novalidate>{% csrf_token %}<input type="hidden" name="next" value="{{ next }}">
+  <div class="form-field"><label for="{{ form.username.id_for_label }}">{{ form.username.label }}</label><div class="input-icon"><svg><use href="{% static 'assets/icons.svg' %}#mail"/></svg>{{ form.username }}</div>{{ form.username.errors }}</div>
+  <div class="form-field"><div class="label-row"><label for="{{ form.password.id_for_label }}">{{ form.password.label }}</label><span class="text-muted small">8 chars min.</span></div><div class="input-icon password-wrap"><svg><use href="{% static 'assets/icons.svg' %}#lock"/></svg>{{ form.password }}<button type="button" class="password-toggle" aria-label="Show password"><svg><use href="{% static 'assets/icons.svg' %}#eye"/></svg></button></div>{{ form.password.errors }}</div>
+  <button class="btn btn-primary auth-submit" type="submit">Access my workspace <svg><use href="{% static 'assets/icons.svg' %}#arrow"/></svg></button>
+</form>
+<!--<div class="demo-note"><strong>To explore the interface</strong><span>Email: demo@brainmax.app<br>Password: BrainMax2026!</span><button type="button" id="fillDemo">Fill automatically</button></div>-->
+<p class="auth-switch">Don't have an account yet? <a href="{% url 'signup' %}">Create account</a></p>
+{% endblock %}

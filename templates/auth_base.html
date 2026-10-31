@@ -1,0 +1,13 @@
+{% extends 'base.html' %}{% load static %}
+{% block body_class %}auth-page{% endblock %}
+{% block body %}
+<main id="main-content" class="auth-layout">
+  <section class="auth-story" aria-label="About BrainMax">
+    <a class="brand auth-brand" href="{% url 'home' %}"><span class="brand-mark"><svg><use href="{% static 'assets/icons.svg' %}#brain"/></svg></span><span>Brain<span>Max</span></span></a>
+    <div class="auth-story-copy"><span class="auth-kicker">COGNITIVE GROWTH AGENT</span><h1>Your potential.<br><span>In motion.</span></h1><p>Assess your abilities, understand your profile, and progress with coaching that adapts to you.</p></div>
+    <div class="neural-art" aria-hidden="true"><svg viewBox="0 0 560 340"><g class="neural-lines"><path d="M80 185 165 95l105 60 80-95 125 100M80 185l100 95 90-125 105 125 100-120M165 95l15 185m90-125 105 125M270 155l205 5M180 280l170-220"/></g><g class="neural-nodes"><circle cx="80" cy="185" r="9"/><circle cx="165" cy="95" r="13"/><circle cx="270" cy="155" r="18"/><circle cx="350" cy="60" r="8"/><circle cx="475" cy="160" r="12"/><circle cx="180" cy="280" r="8"/><circle cx="375" cy="280" r="14"/></g></svg></div>
+    <div class="auth-proof"><div class="proof-avatars"><span>M</span><span>L</span><span>S</span></div><p><strong>A space just for you</strong><br>Your data remains protected.</p></div>
+  </section>
+  <section class="auth-form-side"><div class="auth-form-wrap">{% block auth_content %}{% endblock %}</div><footer>© 2026 BrainMax <span>·</span> Assess · Understand · Grow</footer></section>
+</main>
+{% endblock %}

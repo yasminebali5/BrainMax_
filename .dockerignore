@@ -1,0 +1,8 @@
+db.sqlite3
+staticfiles/
+__pycache__/
+*.pyc
+.env
+.chroma/
+.git/
+tests_artifacts/

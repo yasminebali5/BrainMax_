@@ -1,0 +1,167 @@
+{
+  "version": 1,
+  "historyId": "55db5a93-ed2e-46ec-b9bf-23c1535d2441",
+  "currentRevision": null,
+  "pendingChanges": false,
+  "files": {
+    "AGENTS.md": {
+      "hash": "1b36171117cb7c18f4100a0db6a3782ff2e096115995733200445cc2e80a4060",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/1b/1b36171117cb7c18f4100a0db6a3782ff2e096115995733200445cc2e80a4060"
+    },
+    "BRIEF.md": {
+      "hash": "3b4a6f553933d8e60b6e60abfba457139295098ab0c586e3f8e8f53678a12939",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/3b/3b4a6f553933d8e60b6e60abfba457139295098ab0c586e3f8e8f53678a12939"
+    },
+    "CLAUDE.md": {
+      "hash": "1b36171117cb7c18f4100a0db6a3782ff2e096115995733200445cc2e80a4060",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/1b/1b36171117cb7c18f4100a0db6a3782ff2e096115995733200445cc2e80a4060"
+    },
+    "SPEC.md": {
+      "hash": "cd38e6dc31f4113ef1312ca12af1c3a629ea6f2c476a75c099d8e6f58ddbf95c",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/cd/cd38e6dc31f4113ef1312ca12af1c3a629ea6f2c476a75c099d8e6f58ddbf95c"
+    },
+    "STORYBOARD.md": {
+      "hash": "923bf3f33f2cfde7403ba5b2257074e50b9743d6e3f63b00d1001b6ef35a7f81",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/92/923bf3f33f2cfde7403ba5b2257074e50b9743d6e3f63b00d1001b6ef35a7f81"
+    },
+    "STORYLINES.md": {
+      "hash": "69b083a956efca4e061f617e926dd7403bab86fc5d5b0a86c9d478c86f6db11b",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/69/69b083a956efca4e061f617e926dd7403bab86fc5d5b0a86c9d478c86f6db11b"
+    },
+    "__pycache__/demo_settings.cpython-312.pyc": {
+      "hash": "1ce10726d238704fe7dccae1eec863f35cf63f4fdecf1d1c6639cca5c175e4fb",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/1c/1ce10726d238704fe7dccae1eec863f35cf63f4fdecf1d1c6639cca5c175e4fb"
+    },
+    "assets/captures/ai-coach-page.png": {
+      "hash": "b34ec2f5adb1cef056bc0522d33ea114c96d09cb5ddc225e6098a48d514ac490",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/b3/b34ec2f5adb1cef056bc0522d33ea114c96d09cb5ddc225e6098a48d514ac490"
+    },
+    "assets/captures/assessment-breakdown.png": {
+      "hash": "ce1c89c3ec8ab01f4e0c151f8534eb8292eb5806258be79c424964a3f70ddc6f",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/ce/ce1c89c3ec8ab01f4e0c151f8534eb8292eb5806258be79c424964a3f70ddc6f"
+    },
+    "assets/captures/assessment-question-1.png": {
+      "hash": "2e72d8713b430a037cf69c37af644ed184580af79bebaa9cd031b694270c196a",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/2e/2e72d8713b430a037cf69c37af644ed184580af79bebaa9cd031b694270c196a"
+    },
+    "assets/captures/assessment-question-2.png": {
+      "hash": "b3f46886560d9dbd02df6aa407196226f7641d70bc687b4a9c5045ceaaf35438",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/b3/b3f46886560d9dbd02df6aa407196226f7641d70bc687b4a9c5045ceaaf35438"
+    },
+    "assets/captures/assessment-question-3.png": {
+      "hash": "d224ec72f40e6a364306219e16227370f0164810f1147724686f76f0869572cd",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/d2/d224ec72f40e6a364306219e16227370f0164810f1147724686f76f0869572cd"
+    },
+    "assets/captures/assessment-question-4.png": {
+      "hash": "0f89f93d03d6a7c7aaad64277cb3b7165e6addaed9b21ffafeb97d66036624a5",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/0f/0f89f93d03d6a7c7aaad64277cb3b7165e6addaed9b21ffafeb97d66036624a5"
+    },
+    "assets/captures/assessment-question-5.png": {
+      "hash": "662e737c2e3613929b79c25bd945975dc5550053a70a164aefb1ad52d561d8b3",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/66/662e737c2e3613929b79c25bd945975dc5550053a70a164aefb1ad52d561d8b3"
+    },
+    "assets/captures/assessment-question-6.png": {
+      "hash": "8d4d0ce3522d24ee87cddc5491bc3f1cba4044c89f8f9a84ff2c64f7465262ac",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/8d/8d4d0ce3522d24ee87cddc5491bc3f1cba4044c89f8f9a84ff2c64f7465262ac"
+    },
+    "assets/captures/assessment-ready.png": {
+      "hash": "3a35d50f4e2a9a55b6d168fcde1b8caeb3a497248507bc0834e3aa1ec4873695",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/3a/3a35d50f4e2a9a55b6d168fcde1b8caeb3a497248507bc0834e3aa1ec4873695"
+    },
+    "assets/captures/assessment-results.png": {
+      "hash": "ce1c89c3ec8ab01f4e0c151f8534eb8292eb5806258be79c424964a3f70ddc6f",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/ce/ce1c89c3ec8ab01f4e0c151f8534eb8292eb5806258be79c424964a3f70ddc6f"
+    },
+    "assets/captures/brain-twin-breakdown.png": {
+      "hash": "5a12ba3b65e552f8db93c8098b8a3a14a385680fa7d29e5625dc9b5c4addc94e",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/5a/5a12ba3b65e552f8db93c8098b8a3a14a385680fa7d29e5625dc9b5c4addc94e"
+    },
+    "assets/captures/brain-twin-scores.png": {
+      "hash": "6a564ae1efd83c9cda3afd8ff1c1a110b0281f0c09692ae43d756d5b08ab0f47",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/6a/6a564ae1efd83c9cda3afd8ff1c1a110b0281f0c09692ae43d756d5b08ab0f47"
+    },
+    "assets/captures/brain-twin.png": {
+      "hash": "16d000b785844daddabc9b7e6a90b484aa38d55e093cb007a0672460c66adeb8",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/16/16d000b785844daddabc9b7e6a90b484aa38d55e093cb007a0672460c66adeb8"
+    },
+    "assets/captures/dashboard.png": {
+      "hash": "9d321de8d1fd25185be1617796f527f6cba098e87d0841345bd662ef8e6373de",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/9d/9d321de8d1fd25185be1617796f527f6cba098e87d0841345bd662ef8e6373de"
+    },
+    "assets/captures/learning-path-clean.png": {
+      "hash": "95a7167fe1a18a4fe6a6945d56fc66d9af5c94401a83951b603c88c532ba2185",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/95/95a7167fe1a18a4fe6a6945d56fc66d9af5c94401a83951b603c88c532ba2185"
+    },
+    "assets/captures/learning-path-results.png": {
+      "hash": "79dcd8788df2d01a9f40340a38bb70b105ea2d4d7fc431ef5c3c7b23b2c1dc98",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/79/79dcd8788df2d01a9f40340a38bb70b105ea2d4d7fc431ef5c3c7b23b2c1dc98"
+    },
+    "assets/captures/learning-path-wide.png": {
+      "hash": "f4cda688c4ee132a68ed4ba90cd1934c602e1c5706cd1cc82ee68dbcb13686b4",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/f4/f4cda688c4ee132a68ed4ba90cd1934c602e1c5706cd1cc82ee68dbcb13686b4"
+    },
+    "assets/captures/learning-path.png": {
+      "hash": "f4cda688c4ee132a68ed4ba90cd1934c602e1c5706cd1cc82ee68dbcb13686b4",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/f4/f4cda688c4ee132a68ed4ba90cd1934c602e1c5706cd1cc82ee68dbcb13686b4"
+    },
+    "assets/captures/path-sequence-recall.png": {
+      "hash": "9ca308d524b407f41b93c4f9b6af994fcc6e306f40571bfa130b463bd181d914",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/9c/9ca308d524b407f41b93c4f9b6af994fcc6e306f40571bfa130b463bd181d914"
+    },
+    "assets/captures/profile.png": {
+      "hash": "3a58deb3bba85fc3a478bb0b3fcd9c9f1f013c0ca022286cc6dd5d605c090fe5",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/3a/3a58deb3bba85fc3a478bb0b3fcd9c9f1f013c0ca022286cc6dd5d605c090fe5"
+    },
+    "assets/captures/settings-clean.png": {
+      "hash": "7f35ec49cc6cb07462a6dd6f56cd71a71ea379ca02cccac9a7c0d4f5171bff15",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/7f/7f35ec49cc6cb07462a6dd6f56cd71a71ea379ca02cccac9a7c0d4f5171bff15"
+    },
+    "assets/captures/settings-review.png": {
+      "hash": "aaec056fa505a64752659a78e860255dba013c1ee3139098375b40fab52ee3c0",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/aa/aaec056fa505a64752659a78e860255dba013c1ee3139098375b40fab52ee3c0"
+    },
+    "assets/captures/settings.png": {
+      "hash": "2b43f2001f512bbe1d59d919f37aae5ff6000719a00f51f57db0fb4b3df6d9d8",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/2b/2b43f2001f512bbe1d59d919f37aae5ff6000719a00f51f57db0fb4b3df6d9d8"
+    },
+    "assets/captures/signup-filled.png": {
+      "hash": "bc4325d532e9e5495f6ac0b0071e6537cccc4c65efd978fd3667f489249da5df",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/bc/bc4325d532e9e5495f6ac0b0071e6537cccc4c65efd978fd3667f489249da5df"
+    },
+    "assets/captures/signup.png": {
+      "hash": "25201426da49588e513b8e008f1dbc424d680c0c147f463bd323930685104d51",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/25/25201426da49588e513b8e008f1dbc424d680c0c147f463bd323930685104d51"
+    },
+    "demo_settings.py": {
+      "hash": "30a6795689c8db6c6c9dd8587d6f7ddfca7e2ec5ece2a53bca955da01ad28dd8",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/30/30a6795689c8db6c6c9dd8587d6f7ddfca7e2ec5ece2a53bca955da01ad28dd8"
+    },
+    "hyperframes.json": {
+      "hash": "ad5dadeef78a520800a9e5cdd27a92ff5ac37f11b6a07f611b6b52b9f8c79a17",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/ad/ad5dadeef78a520800a9e5cdd27a92ff5ac37f11b6a07f611b6b52b9f8c79a17"
+    },
+    "index.html": {
+      "hash": "aefec231165c406046397469f4fa8d390541aeb4e970dd8ed5bbeca030684942",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/ae/aefec231165c406046397469f4fa8d390541aeb4e970dd8ed5bbeca030684942"
+    },
+    "meta.json": {
+      "hash": "8030910da31b7b8e242a3c0849b470e831da5660973b01314d8e9bebcc8daecd",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/80/8030910da31b7b8e242a3c0849b470e831da5660973b01314d8e9bebcc8daecd"
+    },
+    "package.json": {
+      "hash": "c1a0ae0c33d95c9a61c9c3c1729be797888552f7e3617f6543fe036275455d76",
+      "content": "/home/yosra-bk/.cache/hyperframes/history/55db5a93-ed2e-46ec-b9bf-23c1535d2441/blobs/c1/c1a0ae0c33d95c9a61c9c3c1729be797888552f7e3617f6543fe036275455d76"
+    }
+  },
+  "revisions": {},
+  "checks": {
+    "latest": null,
+    "revisions": {},
+    "unversioned": []
+  },
+  "snapshots": {
+    "latest": null,
+    "revisions": {},
+    "unversioned": []
+  }
+}

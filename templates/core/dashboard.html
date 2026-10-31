@@ -1,0 +1,19 @@
+{% extends 'app_base.html' %}{% load static %}{% block title %}Dashboard{% endblock %}
+{% block content %}
+<div class="page-head"><div><span class="eyebrow">Your cognitive space</span><h1>Hello, {{ user.display_name }}.</h1><p>Here are the key signals of your progress.</p></div><a class="btn btn-primary" href="{% url 'assessment' %}">New session <svg><use href="{% static 'assets/icons.svg' %}#arrow"/></svg></a></div>
+<div class="dashboard-hero">
+  <section class="panel score-panel"><div><span class="eyebrow">Global cognitive score</span><div class="score-number">78<small>/100</small></div><span class="score-change"><svg><use href="{% static 'assets/icons.svg' %}#trend"/></svg> +5 points this month</span><p>Your highest level so far. Keep it up!</p></div><div class="score-ring"><span>78<small>SOLID LEVEL</small></span></div></section>
+  <section class="panel session-panel"><div><span class="session-date">LAST SESSION · OCT 26</span><h3>Memory & focus</h3><p>A consistent session with great accuracy on sequences.</p><div class="session-meta"><span><svg><use href="{% static 'assets/icons.svg' %}#clock"/></svg> 12 min</span><span><svg><use href="{% static 'assets/icons.svg' %}#check"/></svg> 84% accuracy</span></div></div><a href="{% url 'scoring' %}" class="btn btn-soft">View results <svg><use href="{% static 'assets/icons.svg' %}#arrow"/></svg></a></section>
+</div>
+<div class="metric-grid">
+  <div class="metric-card"><div class="metric-top"><span>Accuracy</span><svg><use href="{% static 'assets/icons.svg' %}#target"/></svg></div><div class="metric-value">84%</div><div class="metric-foot"><strong>+3%</strong> vs. last month</div></div>
+  <div class="metric-card"><div class="metric-top"><span>Average speed</span><svg><use href="{% static 'assets/icons.svg' %}#clock"/></svg></div><div class="metric-value">1.8 s</div><div class="metric-foot"><strong>−0.2 s</strong> per response</div></div>
+  <div class="metric-card"><div class="metric-top"><span>Completed sessions</span><svg><use href="{% static 'assets/icons.svg' %}#check"/></svg></div><div class="metric-value">24</div><div class="metric-foot"><strong>4 sessions</strong> this week</div></div>
+  <div class="metric-card"><div class="metric-top"><span>AI Collaboration</span><svg><use href="{% static 'assets/icons.svg' %}#spark"/></svg></div><div class="metric-value">72<span class="fs-6 text-muted">/100</span></div><div class="metric-foot">Strong practical application</div></div>
+</div>
+<div class="dashboard-grid">
+  <section class="panel"><div class="panel-head"><div><h2>Your progress</h2><p>Overall score trend over the last six weeks</p></div><span class="badge-soft">+10.3%</span></div><div class="chart-wrap"><canvas id="progressChart" aria-label="Overall score progress chart"></canvas></div></section>
+  <section class="panel"><div class="panel-head"><div><h2>For you today</h2><p>Two simple actions tailored to your pace</p></div></div><div class="recommendation"><span class="rec-index">01</span><div><h4>Strengthen your attention</h4><p>A short drill to build resistance to distractions.</p><a href="{% url 'assessment' %}">Start · 8 min →</a></div></div><div class="recommendation"><span class="rec-index">02</span><div><h4>Understand your Brain Twin</h4><p>Your logic is advancing faster than other dimensions.</p><a href="{% url 'brain_twin' %}">Explore my profile →</a></div></div></section>
+</div>
+<p class="text-muted small mt-3 mb-0">The scores displayed are demonstration data for this first interface stage.</p>
+{% endblock %}{% block scripts %}<script src="{% static 'js/chart.umd.min.js' %}"></script><script src="{% static 'js/charts.js' %}"></script>{% endblock %}

@@ -1,0 +1,112 @@
+{% extends 'auth_base.html' %}
+{% load static %}
+
+{% block title %}Sign Up{% endblock %}
+
+{% block auth_content %}
+
+<div class="auth-heading">
+    <h2>Let’s get to know you</h2>
+    <p>Create your BrainMax account in less than a minute.</p>
+</div>
+
+{% if form.non_field_errors %}
+<div class="alert alert-danger">
+    {{ form.non_field_errors }}
+</div>
+{% endif %}
+
+<form method="post" novalidate>
+    {% csrf_token %}
+
+    <!-- First name + Last name -->
+    <div class="row g-3">
+        <div class="col-sm-6 form-field">
+            <label for="{{ form.first_name.id_for_label }}">First name</label>
+            {{ form.first_name }}
+            {{ form.first_name.errors }}
+        </div>
+
+        <div class="col-sm-6 form-field">
+            <label for="{{ form.last_name.id_for_label }}">Last name</label>
+            {{ form.last_name }}
+            {{ form.last_name.errors }}
+        </div>
+    </div>
+
+    <!-- Email -->
+    <div class="form-field">
+        <label for="{{ form.email.id_for_label }}">Email address</label>
+
+        <div class="input-icon">
+            <svg>
+                <use href="{% static 'assets/icons.svg' %}#mail"/>
+            </svg>
+
+            {{ form.email }}
+        </div>
+
+        {{ form.email.errors }}
+    </div>
+
+    <!-- Date of birth -->
+    <div class="form-field">
+        <label for="{{ form.birth_date.id_for_label }}">Date of birth</label>
+        {{ form.birth_date }}
+        {{ form.birth_date.errors }}
+    </div>
+
+    <!-- Password + Confirm password -->
+    <div class="row g-3">
+        <div class="col-sm-6 form-field">
+            <label for="{{ form.password1.id_for_label }}">Password</label>
+
+            <div class="password-wrap">
+                {{ form.password1 }}
+
+                <button type="button"
+                        class="password-toggle"
+                        aria-label="Show password">
+                    <svg>
+                        <use href="{% static 'assets/icons.svg' %}#eye"/>
+                    </svg>
+                </button>
+            </div>
+
+            {{ form.password1.errors }}
+        </div>
+
+        <div class="col-sm-6 form-field">
+            <label for="{{ form.password2.id_for_label }}">Confirm password</label>
+            {{ form.password2 }}
+            {{ form.password2.errors }}
+        </div>
+    </div>
+
+    <!-- Objectives -->
+    <div class="form-field">
+        <label for="{{ form.objectives.id_for_label }}">
+            Your goal <span class="optional">optional</span>
+        </label>
+
+        {{ form.objectives }}
+        {{ form.objectives.errors }}
+    </div>
+
+    <!-- Submit -->
+    <button class="btn btn-primary auth-submit" type="submit">
+        Create my workspace
+
+        <svg>
+            <use href="{% static 'assets/icons.svg' %}#arrow"/>
+        </svg>
+    </button>
+
+</form>
+
+<p class="auth-switch">
+    Already registered?
+    <a href="{% url 'login' %}">Log in</a>
+</p>
+
+{% endblock %}

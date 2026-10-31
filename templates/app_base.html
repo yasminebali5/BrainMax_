@@ -1,0 +1,32 @@
+{% extends 'base.html' %}{% load static %}
+{% block body_class %}app-shell{% endblock %}
+{% block body %}
+<div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+<aside class="sidebar" id="sidebar" aria-label="Main navigation">
+  <a class="brand" href="{% url 'dashboard' %}" aria-label="BrainMax overview"><span class="brand-mark"><svg><use href="{% static 'assets/icons.svg' %}#brain"/></svg></span><span>Brain<span>Max</span></span></a>
+  <div class="sidebar-caption">YOUR LEARNING SPACE</div>
+  <nav class="sidebar-nav">
+    <a href="{% url 'dashboard' %}" class="nav-link {% if active == 'overview' %}active{% endif %}"><svg><use href="{% static 'assets/icons.svg' %}#grid"/></svg><span>Overview</span></a>
+    <a href="{% url 'learning_profile_page' %}" class="nav-link {% if active == 'profile' %}active{% endif %}"><svg><use href="{% static 'assets/icons.svg' %}#user"/></svg><span>Profile</span></a>
+    <a href="{% url 'assessment' %}" class="nav-link {% if active == 'assessment' %}active{% endif %}"><svg><use href="{% static 'assets/icons.svg' %}#puzzle"/></svg><span>Assessment</span></a>
+    <a href="{% url 'learning_path' %}" class="nav-link {% if active == 'path' %}active{% endif %}"><svg><use href="{% static 'assets/icons.svg' %}#target"/></svg><span>Learning path</span></a>
+    <a href="{% url 'brain_twin' %}" class="nav-link {% if active == 'twin' %}active{% endif %}"><svg><use href="{% static 'assets/icons.svg' %}#twin"/></svg><span>Brain twin</span></a>
+    <a href="{% url 'coach' %}" class="nav-link {% if active == 'coach' %}active{% endif %}"><svg><use href="{% static 'assets/icons.svg' %}#spark"/></svg><span>AI Coach</span></a>
+  </nav>
+  <div class="sidebar-bottom">
+    <a href="{% url 'settings' %}" class="nav-link {% if active == 'settings' %}active{% endif %}"><svg><use href="{% static 'assets/icons.svg' %}#score"/></svg><span>Settings</span></a>
+    <form method="post" action="{% url 'logout' %}">{% csrf_token %}<button class="nav-link logout-link" type="submit"><svg><use href="{% static 'assets/icons.svg' %}#logout"/></svg><span>Log out</span></button></form>
+  </div>
+</aside>
+<div class="app-main">
+  <header class="topbar">
+    <button class="icon-btn mobile-menu" id="menuButton" aria-label="Open menu" aria-expanded="false"><svg><use href="{% static 'assets/icons.svg' %}#menu"/></svg></button>
+    <div class="topbar-context"><span class="status-dot"></span><span>One small step at a time.</span></div>
+    <div class="topbar-actions"><a href="{% url 'settings' %}" class="user-chip"><span class="avatar">{{ user.first_name|first|default:user.email|first|upper }}</span><span class="user-chip-text"><strong>{{ user.display_name }}</strong><small>Learning explorer</small></span></a></div>
+  </header>
+  <main id="main-content" class="page-content">
+    {% if messages %}<div class="messages">{% for message in messages %}<div class="alert alert-success">{{ message }}</div>{% endfor %}</div>{% endif %}
+    {% block content %}{% endblock %}
+  </main>
+</div>
+{% endblock %}

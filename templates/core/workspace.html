@@ -1,0 +1,34 @@
+{% extends 'app_base.html' %}{% load static %}
+{% block title %}{{ page|title }}{% endblock %}
+{% block content %}
+<div id="brainmax-workspace" data-page="{{ page }}" data-name="{{ user.display_name }}" data-user="{{ user.pk }}"><div class="panel p-4">Loading your learning space…</div></div>
+<div id="bolt" class="bolt-dock" data-mode="learning" data-speaker="brain" aria-label="Brain and Pinky learning companions">
+  <div class="bolt-portrait">
+    <div class="bolt-mascots">
+      <button id="brainAvatar" class="bolt-avatar brain-avatar" type="button" aria-label="Ask Brain for a plan" title="Brain · learning plan"><span id="boltSprite" class="bolt-sprite" data-pose="neutral" role="img" aria-label="Brain, the strategy robot"></span><span class="mascot-name">BRAIN</span></button>
+      <button id="pinkyAvatar" class="bolt-avatar pinky-avatar" type="button" aria-label="Ask Pinky for support" title="Pinky · calm and motivation"><span id="pinkySprite" class="pinky-sprite" data-pose="listening" role="img" aria-label="Pinky, the supportive robot"></span><span class="mascot-name">PINKY</span></button>
+    </div>
+    <span id="boltBadge" class="bolt-badge">Here to help</span>
+  </div>
+  <div class="bolt-content">
+    <div class="bolt-heading"><strong id="boltSpeaker">BRAIN</strong><span id="boltMode">Learning mode</span><small class="companion-roles">Brain plans · Pinky supports</small></div>
+    <p id="boltMessage" aria-live="polite">I’m here to help you take the next step.</p>
+    <div id="boltQuickReplies" class="bolt-quick"></div>
+    <div id="boltMoodWrap" class="bolt-mood" hidden>
+      <label for="boltMood">How are you feeling? (optional)</label>
+      <select id="boltMood"><option value="">Choose if you want</option><option value="confused">A bit confused</option><option value="stressed">Stressed</option><option value="frustrated">Frustrated</option><option value="tired">Tired</option><option value="disengaged">Unmotivated</option><option value="confident">Confident</option></select>
+      <small>Your selection tailors this session only; neither robot infers or saves your mood.</small>
+    </div>
+    <div id="boltChat" class="bolt-chat" hidden>
+      <label for="boltInput">Ask Brain for a plan or Pinky for support</label>
+      <div class="bolt-chat-toolbar"><small>Conversation history stays in this browser session.</small><button id="boltClear" type="button">Clear conversation</button></div>
+      <div id="boltTranscript" class="bolt-transcript" role="log" aria-live="polite" aria-relevant="additions text"></div>
+      <p id="boltAiHint" class="bolt-ai-hint" hidden>Brain is using local replies. <a href="/settings/">Enable AI coaching in Settings</a> when an AI provider is configured.</p>
+      <form id="boltChatForm" class="bolt-chat-row"><input id="boltInput" maxlength="500" autocomplete="off" placeholder="Ask about your next step"><button id="boltSend" type="submit">Send</button></form>
+    </div>
+  </div>
+  <div class="bolt-controls"><button id="boltVoice" type="button" aria-label="Turn voices on" title="Voices off">🔇</button><button id="boltExpand" type="button" aria-label="Open companion chat" title="Ask Brain or Pinky">💬</button><button id="boltCollapse" type="button" aria-label="Minimize companions" title="Minimize">−</button></div>
+</div>
+{% csrf_token %}
+{% endblock %}
+{% block scripts %}<script src="{% static 'js/locales.js' %}?v=20261031-12"></script><script src="{% static 'js/workspace.js' %}?v=20261031-16"></script>{% endblock %}

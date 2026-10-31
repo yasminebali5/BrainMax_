@@ -1,0 +1,161 @@
+{% extends 'app_base.html' %}
+{% load static %}
+
+{% block title %}My Profile{% endblock %}
+
+{% block content %}
+
+<div class="page-head">
+    <div>
+        <span class="eyebrow">Your Personal Space</span>
+        <h1>Your Profile</h1>
+        <p>Manage your details and the goals that guide your cognitive growth.</p>
+    </div>
+</div>
+
+<div class="profile-layout">
+
+    <aside class="panel profile-summary">
+
+        <span class="avatar">
+            {{ user.first_name|first|default:user.email|first|upper }}
+        </span>
+
+        <h2>{{ user.get_full_name|default:user.display_name }}</h2>
+        <p>{{ user.email }}</p>
+
+        <span class="badge-soft badge-blue">
+            Cognitive Explorer
+        </span>
+
+        <div class="profile-stats">
+
+            {% if age is not None %}
+            <div>
+                <strong>{{ age }}</strong>
+                <small>Age</small>
+            </div>
+            {% endif %}
+
+        </div>
+
+    </aside>
+
+
+    <section class="panel">
+
+        <div class="panel-head">
+            <div>
+                <h2>Personal Information</h2>
+                <p>This information is saved to your account.</p>
+            </div>
+        </div>
+
+
+        <form method="post" novalidate>
+
+            {% csrf_token %}
+
+
+            <div class="row g-3">
+
+                <div class="col-md-6 form-field">
+                    <label for="{{ form.first_name.id_for_label }}">
+                        First name
+                    </label>
+
+                    {{ form.first_name }}
+                    {{ form.first_name.errors }}
+                </div>
+
+
+                <div class="col-md-6 form-field">
+                    <label for="{{ form.last_name.id_for_label }}">
+                        Last name
+                    </label>
+
+                    {{ form.last_name }}
+                    {{ form.last_name.errors }}
+                </div>
+
+            </div>
+
+
+            <div class="form-field">
+
+                <label for="{{ form.email.id_for_label }}">
+                    Email address
+                </label>
+
+                {{ form.email }}
+                {{ form.email.errors }}
+
+            </div>
+
+
+            <div class="row g-3">
+
+                <div class="col-md-6 form-field">
+
+                    <label for="{{ form.birth_date.id_for_label }}">
+                        Date of birth
+                    </label>
+
+                    {{ form.birth_date }}
+                    {{ form.birth_date.errors }}
+
+                </div>
+
+
+                <div class="col-md-6 form-field">
+
+                    <label for="age">
+                        Age
+                    </label>
+
+                    <input type="text" id="age" class="form-control"
+                        value="{% if age is not None %}{{ age }} years{% else %}Not provided{% endif %}" readonly>
+
+                    <small class="text-muted">
+                        Your age is calculated automatically from your date of birth.
+                    </small>
+
+                </div>
+
+            </div>
+
+
+            <div class="form-field">
+
+                <label for="{{ form.objectives.id_for_label }}">
+                    My personal goals
+                </label>
+
+                {{ form.objectives }}
+                {{ form.objectives.errors }}
+
+                <small class="text-muted">
+                    e.g. Improve my focus at work, maintain sharp memory,
+                    enhance cognitive agility.
+                </small>
+
+            </div>
+
+
+            <button class="btn btn-primary" type="submit">
+
+                Save changes
+
+                <svg>
+                    <use href="{% static 'assets/icons.svg' %}#check" />
+                </svg>
+
+            </button>
+
+        </form>
+
+    </section>
+
+</div>
+
+{% endblock %}

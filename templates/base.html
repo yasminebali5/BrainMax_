@@ -1,0 +1,17 @@
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="BrainMax — assess, understand, and develop your cognitive abilities.">
+  <title>{% block title %}BrainMax{% endblock %} · BrainMax</title>
+  <link rel="icon" href="{% static 'assets/favicon.svg' %}" type="image/svg+xml">
+  <link rel="stylesheet" href="{% static 'css/bootstrap.min.css' %}"><link rel="stylesheet" href="{% static 'css/fonts.css' %}"><link rel="stylesheet" href="{% static 'css/app.css' %}">
+  <link rel="stylesheet" href="{% static 'css/workspace.css' %}?v=20261031-11">
+  {% block head %}{% endblock %}
+</head>
+<body class="{% block body_class %}{% endblock %}">
+<a class="skip-link" href="#main-content">Skip to content</a>
+{% block body %}{% endblock %}
+<script src="{% static 'js/bootstrap.bundle.min.js' %}"></script><script src="{% static 'js/app.js' %}"></script>
+{% block scripts %}{% endblock %}
+</body></html>

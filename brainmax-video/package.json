@@ -1,0 +1,11 @@
+{
+  "name": "brainmax-video",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npx --yes hyperframes@0.8.225 preview",
+    "check": "npx --yes hyperframes@0.8.225 check",
+    "render": "npx --yes hyperframes@0.8.225 render",
+    "publish": "npx --yes hyperframes@0.8.225 publish"
+  }
+}
