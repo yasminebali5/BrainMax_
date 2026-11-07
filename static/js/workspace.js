@@ -4,8 +4,24 @@
   const page = root.dataset.page;
   const csrf = document.querySelector('input[name=csrfmiddlewaretoken]')?.value || '';
   const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const readableCoachMessage = value => {
+    const text=String(value??'').trim();
+    const candidate=text.replace(/^```(?:json)?\s*|\s*```$/gi,'');
+    try{
+      const parsed=JSON.parse(candidate);
+      if(parsed&&typeof parsed==='object'&&!Array.isArray(parsed)
+        &&'action' in parsed&&('ui' in parsed||'report_to_layer_a' in parsed)
+        &&typeof parsed.message==='string'&&parsed.message.trim()){
+        return parsed.message.trim();
+      }
+    }catch(error){
+      if(!(error instanceof SyntaxError))throw error;
+    }
+    return text;
+  };
   const subjects = {ml:'Machine learning',cyber:'Cybersecurity',ai:'Artificial intelligence'};
   let state = {profile:{},preferences:{},history:[]}, draft = {}, choice = null, confidence = null, busy = false;
+  let questionTelemetry=null, lastQuestionActivity=0;
   let pathClock = null;
   const chatStorageKey=`brainmax-chat-${root.dataset.user}`;
   let chatHistory=[];
@@ -14,7 +30,9 @@
     if(Array.isArray(savedChatHistory)){
       chatHistory=savedChatHistory.filter(item=>
         item&&['user','assistant'].includes(item.role)&&typeof item.content==='string',
-      );
+      ).map(item=>item.role==='assistant'
+        ?{...item,content:readableCoachMessage(item.content)}
+        :item);
     }
   }catch{
     sessionStorage.removeItem(chatStorageKey);
@@ -22,6 +40,17 @@
   const bolt = document.getElementById('bolt'), sprite = document.getElementById('boltSprite'), pinkySprite = document.getElementById('pinkySprite');
   let voiceOn = false, lastSpeech = '', lastSpeaker = 'brain', selectedMood = '';
   let speakerPoseTimer = null;
+  const recordQuestionActivity=()=>{
+    if(questionTelemetry)lastQuestionActivity=performance.now();
+  };
+  document.addEventListener('pointermove',recordQuestionActivity,{passive:true});
+  document.addEventListener('keydown',recordQuestionActivity);
+  document.addEventListener('scroll',()=>{
+    if(questionTelemetry)questionTelemetry.stimulus_seen=true;
+  },{passive:true});
+  document.addEventListener('visibilitychange',()=>{
+    if(questionTelemetry&&document.hidden)questionTelemetry.tab_blurred=true;
+  });
 
   async function api(endpoint, data) {
     const response = await fetch('/api/' + endpoint + '/', data === undefined ? {} : {method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':csrf},body:JSON.stringify(data)});
@@ -33,21 +62,176 @@
   }
   function error(message) { const el = document.getElementById('bm-error'); if (el) el.textContent = message; speak('Something needs attention. ' + message, 'confused', '⚠️ Needs attention'); }
   async function task(fn) { if (busy) return; busy = true; try { await fn(); } catch (e) { error(e.message); } finally { busy = false; } }
+  async function runCoachAction(action, button) {
+    const destinations = {
+      assessment: '/assessment/',
+      learning_path: '/learning-path/',
+      profile: '/profile/',
+      account_profile: '/accounts/profile/',
+      settings: '/settings/',
+      brain_twin: '/brain-twin/',
+      coach: '/ai-coach/',
+      overview: '/dashboard/',
+    };
+    if (action.type === 'navigate_page') {
+      const destination = destinations[action.destination];
+      if (destination) {
+        const startAssessment = (
+          action.destination === 'assessment' && action.start_assessment
+        );
+        window.location.assign(
+          startAssessment ? `${destination}?start=1` : destination
+        );
+      }
+      return;
+    }
+    if (action.type === 'open_assessment') {
+      window.location.href = '/assessment/';
+      return;
+    }
+    if (action.type === 'dismiss_learning_plan') {
+      button?.parentElement?.replaceChildren();
+      return;
+    }
+    if (action.type === 'dismiss_site_action') {
+      button?.parentElement?.replaceChildren();
+      return;
+    }
+    if (action.type === 'download_data') {
+      window.location.assign('/api/export/');
+      return;
+    }
+    if (action.type === 'apply_site_action') {
+      if (button) button.disabled = true;
+      try {
+        const result = await api('coach/site-action', {
+          confirmation: action.confirmation,
+        });
+        const actions = button?.parentElement;
+        if (actions) {
+          actions.replaceChildren();
+          const confirmation = document.createElement('p');
+          confirmation.textContent = result.message;
+          actions.append(confirmation);
+        }
+        const destinations = {
+          dashboard: '/dashboard/',
+          assessment: '/assessment/',
+        };
+        if (result.destination) {
+          window.location.assign(destinations[result.destination]);
+        } else if (action.confirmation) {
+          window.setTimeout(() => window.location.reload(), 350);
+        }
+      } catch (e) {
+        if (button) button.disabled = false;
+        const errorMessage = document.getElementById('coachError');
+        if (errorMessage) errorMessage.textContent = e.message;
+        else document.getElementById('boltMessage').textContent = e.message;
+      }
+      return;
+    }
+    if (action.type === 'apply_learning_plan') {
+      const originalLabel = button?.textContent;
+      const actions = button?.parentElement;
+      let actionStatus = actions?.querySelector('[data-action-status]');
+      if (!actionStatus && actions) {
+        actionStatus = document.createElement('p');
+        actionStatus.dataset.actionStatus = '';
+        actionStatus.setAttribute('role', 'status');
+        actionStatus.setAttribute('aria-live', 'polite');
+        actions.append(actionStatus);
+      }
+      const setStatus = (message, isError = false) => {
+        if (!actionStatus) return;
+        actionStatus.textContent = message;
+        actionStatus.setAttribute('role', isError ? 'alert' : 'status');
+      };
+      if (button) {
+        button.disabled = true;
+        button.textContent = 'Applying plan…';
+      }
+      try {
+        const result = await api('coach/learning-plan', {
+          proposal: action.proposal,
+        });
+        if (action.after_apply === 'assessment') {
+          if (button) button.textContent = 'Starting assessment…';
+          setStatus('Plan confirmed. Preparing your assessment…');
+          await api('assessment', {replace_active: true});
+        }
+        if (actions) {
+          actions.replaceChildren();
+          const confirmation = document.createElement('p');
+          confirmation.setAttribute('role', 'status');
+          confirmation.textContent = result.message;
+          actions.append(confirmation);
+        }
+        const nextPage = destinations[action.after_apply];
+        if (nextPage) {
+          window.location.assign(
+            action.after_apply === 'assessment'
+              ? `${nextPage}?start=1`
+              : nextPage
+          );
+        }
+      } catch (e) {
+        if (button) {
+          button.disabled = false;
+          button.textContent = originalLabel;
+        }
+        setStatus(e.message, true);
+      }
+      return;
+    }
+    if (action.type !== 'verification_retest') return;
+    if (button) button.disabled = true;
+    try {
+      await api('pushback/retest', {assessment_id: action.assessment_id});
+      window.location.href = '/assessment/';
+    } catch (e) {
+      if (button) button.disabled = false;
+      const errorMessage = document.getElementById('coachError');
+      if (errorMessage) errorMessage.textContent = e.message;
+      else document.getElementById('boltMessage').textContent = e.message;
+    }
+  }
+  function addCoachActions(container, actions) {
+    if (!actions?.length) return;
+    const group=document.createElement('div');
+    group.className='coach-actions';
+    (actions || []).forEach(action => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'bm-btn secondary';
+      button.textContent = action.label;
+      button.onclick = () => runCoachAction(action, button);
+      group.append(button);
+    });
+    container.append(group);
+  }
   function speak(message, pose='neutral', status='Listening', quick=[], speaker='brain') {
-    window.clearTimeout(speakerPoseTimer);
-    document.getElementById('boltMessage').textContent = message;
-    document.getElementById('boltBadge').textContent = status;
+    if (!message) return;
+    const messageEl = document.getElementById('boltMessage');
+    const badgeEl = document.getElementById('boltBadge');
+    const speakerEl = document.getElementById('boltSpeaker');
+    const quickEl = document.getElementById('boltQuickReplies');
+    if (messageEl) messageEl.textContent = message;
+    if (badgeEl) badgeEl.textContent = status;
+    if (!bolt) return;
     lastSpeaker = speaker === 'pinky' ? 'pinky' : 'brain';
     bolt.dataset.speaker = lastSpeaker;
-    document.getElementById('boltSpeaker').textContent = lastSpeaker === 'pinky' ? 'PINKY' : 'BRAIN';
+    if (speakerEl) speakerEl.textContent = lastSpeaker === 'pinky' ? 'PINKY' : 'BRAIN';
     const safePose = bolt.dataset.mode==='assessment' ? 'quiet' : pose;
-    sprite.dataset.pose = lastSpeaker === 'brain' ? safePose : bolt.dataset.mode==='assessment' ? 'quiet' : 'handoff';
-    pinkySprite.dataset.pose = lastSpeaker === 'pinky' ? safePose : bolt.dataset.mode==='assessment' ? 'quiet' : 'listening';
-    document.getElementById('boltQuickReplies').replaceChildren(...quick.map(label => { const b=document.createElement('button'); b.type='button'; b.textContent=label; b.onclick=()=>chat(label); return b; }));
+    if (sprite) sprite.dataset.pose = lastSpeaker === 'brain' ? safePose : bolt.dataset.mode==='assessment' ? 'quiet' : 'handoff';
+    if (pinkySprite) pinkySprite.dataset.pose = lastSpeaker === 'pinky' ? safePose : bolt.dataset.mode==='assessment' ? 'quiet' : 'listening';
+    if (quickEl) {
+      quickEl.replaceChildren(...quick.map(label => { const b=document.createElement('button'); b.type='button'; b.textContent=label; b.onclick=()=>chat(label); return b; }));
+    }
     lastSpeech = message;
     if (pose === 'speaking' && (!voiceOn || !('speechSynthesis' in window))) {
       speakerPoseTimer=window.setTimeout(()=>{
-        if(lastSpeaker==='pinky'&&pinkySprite.dataset.pose==='speaking'){
+        if(lastSpeaker==='pinky'&&pinkySprite&&pinkySprite.dataset.pose==='speaking'){
           pinkySprite.dataset.pose='caring';
         }
       },2400);
@@ -59,25 +243,29 @@
       u.rate = bolt.dataset.mode === 'assessment' ? .96 : speakingAs === 'pinky' ? 1.04 : .94;
       u.pitch = bolt.dataset.mode === 'assessment' ? 1 : speakingAs === 'pinky' ? 1.18 : .88;
       const speechLanguage={en:'en',fr:'fr',ar:'ar'}[state.preferences?.language||'en'];
-      u.lang={en:'en-US',fr:'fr-FR',ar:'ar-SA'}[speechLanguage];
-      const voices=speechSynthesis.getVoices().filter(v=>v.lang?.toLowerCase().startsWith(speechLanguage));
-      const preferred=speakingAs==='pinky'?/female|samantha|zira|victoria|jenny|aria/i:/male|daniel|david|mark|guy/i;
-      u.voice=voices.find(v=>preferred.test(v.name)) || voices.find(v=>v.default) || voices[0] || null;
-      if (bolt.dataset.mode !== 'assessment') {
-        if (speakingAs === 'brain') sprite.dataset.pose = 'speaking';
-        else pinkySprite.dataset.pose = 'speaking';
+      if (speechLanguage) {
+        u.lang={en:'en-US',fr:'fr-FR',ar:'ar-SA'}[speechLanguage];
+        const voices=speechSynthesis.getVoices().filter(v=>v.lang?.toLowerCase().startsWith(speechLanguage));
+        const preferred=speakingAs==='pinky'?/female|samantha|zira|victoria|jenny|aria/i:/male|daniel|david|mark|guy/i;
+        u.voice=voices.find(v=>preferred.test(v.name)) || voices.find(v=>v.default) || voices[0] || null;
+        if (bolt.dataset.mode !== 'assessment') {
+          if (speakingAs === 'brain' && sprite) sprite.dataset.pose = 'speaking';
+          else if (pinkySprite) pinkySprite.dataset.pose = 'speaking';
+        }
+        u.onend = () => {
+          if (sprite) sprite.dataset.pose = speakingAs === 'brain' ? (pose==='speaking'?'neutral':safePose) : 'quiet';
+          if (pinkySprite) pinkySprite.dataset.pose = speakingAs === 'pinky' ? (pose==='speaking'?'caring':safePose) : 'listening';
+        };
+        speechSynthesis.speak(u);
       }
-      u.onend = () => {
-        sprite.dataset.pose = speakingAs === 'brain' ? (pose==='speaking'?'neutral':safePose) : 'quiet';
-        pinkySprite.dataset.pose = speakingAs === 'pinky' ? (pose==='speaking'?'caring':safePose) : 'listening';
-      };
-      speechSynthesis.speak(u);
     }
   }
   function mode(value) {
-    bolt.dataset.mode=value;
-    document.getElementById('boltMode').textContent=value==='assessment'?'Quiet assessment mode':value==='debrief'?'Results review':'Learning mode';
-    if(value==='assessment') { sprite.dataset.pose='quiet'; pinkySprite.dataset.pose='quiet'; }
+    if (bolt) bolt.dataset.mode=value;
+    const boltModeEl = document.getElementById('boltMode');
+    if (boltModeEl) boltModeEl.textContent=value==='assessment'?'Quiet assessment mode':value==='debrief'?'Results review':'Learning mode';
+    if(value==='assessment' && sprite) { sprite.dataset.pose='quiet'; }
+    if(value==='assessment' && pinkySprite) { pinkySprite.dataset.pose='quiet'; }
   }
   function chatContext(){
     let remaining=12000;
@@ -99,13 +287,15 @@
     const transcript=document.getElementById('boltTranscript');
     const sendButton=document.getElementById('boltSend');
     const input=document.getElementById('boltInput');
-    const addLine=(speaker,content,className,role=null)=>{
+    const addLine=(speaker,content,className,role=null,actions=[])=>{
       if(!transcript)return null;
       transcript.querySelector('.bolt-chat-empty')?.remove();
       const line=document.createElement('article');line.className=`bolt-transcript-line ${className}`;
       const label=document.createElement('strong');label.textContent=speaker;
       const body=document.createElement('span');body.textContent=content;
-      line.append(label,body);transcript.append(line);transcript.scrollTop=transcript.scrollHeight;return line;
+      line.append(label,body);
+      addCoachActions(line,actions);
+      transcript.append(line);transcript.scrollTop=transcript.scrollHeight;return line;
     };
     chatHistory.push({role:'user',content:text});
     sessionStorage.setItem(chatStorageKey,JSON.stringify(chatHistory));
@@ -127,23 +317,24 @@
       speak(result.message,result.mode==='assessment'?'quiet':result.growth?.trend==='up'?'growth-three':'neutral',result.status,result.quick_replies,speaker);
       chatHistory.push({role:'assistant',content:result.message});
       sessionStorage.setItem(chatStorageKey,JSON.stringify(chatHistory));
-      addLine(speaker==='pinky'?'Pinky':'Brain',result.message,'assistant');
+      addLine(speaker==='pinky'?'Pinky':'Brain',result.message,'assistant',null,result.actions);
       document.getElementById('boltMode').textContent += result.source ? ' · '+result.source : '';
     } catch(e) { if(pending)pending.remove();addLine('Brain',e.message,'error');speak(e.message,'confused','Needs attention'); }
     finally { sendButton.disabled=false;input.disabled=false; }
   }
   function renderChatHistory(){
     const transcript=document.getElementById('boltTranscript');
+    if(!transcript) return;
     transcript.replaceChildren();
     if(!chatHistory.length){
       const welcome=document.createElement('p');
       welcome.className='bolt-chat-empty';
-      welcome.textContent=window.BrainMaxI18n.translate('I’m here to help you take the next step.');
+      welcome.textContent=window.BrainMaxI18n ? window.BrainMaxI18n.translate('I’m here to help you take the next step.') : 'I’m here to help you take the next step.';
       transcript.append(welcome);
       return;
     }
     chatHistory.forEach(item=>{
-      const speaker=item.role==='user'?window.BrainMaxI18n.translate('You'):'Brain';
+      const speaker=item.role==='user'?(window.BrainMaxI18n ? window.BrainMaxI18n.translate('You') : 'You'):'Brain';
       const line=document.createElement('article');
       line.className=`bolt-transcript-line ${item.role}`;
       const label=document.createElement('strong');
@@ -193,15 +384,22 @@
     ({overview,profile,assessment,path:learningPath,twin,settings,coach}[page] || overview)();
     if (page === 'settings') {
       root.querySelector('#pref-ai').previousElementSibling.querySelector('small').textContent =
-      window.BrainMaxI18n.translate('Off by default. When on, your messages and conversation context, goal, latest assessment score, and learning-challenge score and time may be sent to Groq (preferred when configured) or OpenRouter for feedback. Exercise generation also sends the subject and reviewed Heba example questions; it does not send your profile or assessment answers. Recent assessment scores are shared only when history sharing is enabled; retrieved Chroma history is included only when local memory is on.');
+      window.BrainMaxI18n.translate('Off by default. When on, your messages and conversation context, goal, latest assessment score, and learning-challenge score and time may be sent to Groq (preferred when configured) or OpenRouter for feedback. When you ask why a path activity was assigned, its saved selection record is also included. Dated score and response-time trends are shared only when history sharing is enabled; retrieved Chroma history is included only when local memory is on.');
     }
   }
 
   function overview() {
-    mode('learning'); const a=latest();
+    mode('learning'); const a=latest(); const t=window.BrainMaxI18n.translate;
     if(!a){root.innerHTML=head('YOUR WORKSPACE',`Hello, ${esc(root.dataset.name)}.`, 'Your first six-question assessment will establish a starting point.')+`<div class="bm-panel bm-score-hero"><div><span class="bm-eyebrow" style="color:#c9dfff">YOUR NEXT STEP</span><h2>Find your starting point</h2><p>Choose a subject, answer six questions, and receive a focused learning path.</p>${button(state.profile?.subject?'/assessment/':'/profile/',state.profile?.subject?'Start assessment':'Create learning profile')}</div></div>`;speak('Start with your profile. I’ll help you understand your results and choose a useful next step.','growth-one','👋 Here to help',['Make a plan']);return;}
     const prev=state.preferences?.growth ? state.history?.[1] : null; const delta=prev ? a.score-prev.score : null;
-    root.innerHTML=head('YOUR WORKSPACE',`Welcome back, ${esc(root.dataset.name)}.`,`${esc(a.subject_name)} · Latest assessment ${esc(a.date)}`,button('/assessment/','Practise again'))+`<div class="bm-grid"><section class="bm-panel bm-score-hero"><div><span class="bm-eyebrow" style="color:#c9dfff">CURRENT SCORE</span><div class="bm-kpi">${a.score}<small style="font-size:20px">/100</small></div><h2>${esc(scoreLabel(a.score))}</h2><p>Correct without hints. ${delta===null?'First baseline':`${delta>=0?'+':''}${delta} points from the previous session`}.</p></div></section><section class="bm-panel"><h2>Your next small step</h2><p>${esc(recommendation(a))}</p>${button('/learning-path/','Open learning path',true)}</section></div><div class="bm-grid three" style="margin-top:20px"><div class="bm-panel"><span class="bm-note">ACCURACY</span><div class="bm-kpi">${a.accuracy}%</div><p>Correct answers including hinted ones.</p></div><div class="bm-panel"><span class="bm-note">CONFIDENCE CALIBRATION</span><div class="bm-kpi">${a.calibration}</div><p>How well certainty matched results.</p></div><div class="bm-panel"><span class="bm-note">AVG RESPONSE TIME</span><div class="bm-kpi">${a.avg_time}s</div><p>Context only; never a penalty.</p></div></div>${collaborationPanel(state.collaboration,window.BrainMaxI18n.translate)}<section class="bm-panel" style="margin-top:20px"><h2>Section scores</h2>${topicBars(a)}</section><p class="bm-note" style="margin-top:13px">Six questions are only a small sample. Scores describe this exercise, not a diagnosis or fixed ability.</p>`;
+    const openReview=state.collaboration?.profile_review;
+    const reviewPanel=openReview?.status==='under_review'?`<section class="bm-panel" style="margin-top:20px"><h2>${t('Assessment under review')}</h2><p>${t('Your score has not changed. You can add fresh evidence with a short verification check.')}</p><button id="bm-start-verification" class="bm-btn secondary" type="button">${t('Start verification')} →</button></section>`:'';
+    root.innerHTML=head('YOUR WORKSPACE',`Welcome back, ${esc(root.dataset.name)}.`,`${esc(a.subject_name)} · Latest assessment ${esc(a.date)}`,button('/assessment/','Practise again'))+reviewPanel+`<div class="bm-grid"><section class="bm-panel bm-score-hero"><div><span class="bm-eyebrow" style="color:#c9dfff">CURRENT SCORE</span><div class="bm-kpi">${a.score}<small style="font-size:20px">/100</small></div><h2>${esc(scoreLabel(a.score))}</h2><p>Correct without hints. ${delta===null?'First baseline':`${delta>=0?'+':''}${delta} points from the previous session`}.</p></div></section><section class="bm-panel"><h2>Your next small step</h2><p>${esc(recommendation(a))}</p>${button('/learning-path/','Open learning path',true)}</section></div><div class="bm-grid three" style="margin-top:20px"><div class="bm-panel"><span class="bm-note">ACCURACY</span><div class="bm-kpi">${a.accuracy}%</div><p>Correct answers including hinted ones.</p></div><div class="bm-panel"><span class="bm-note">CONFIDENCE CALIBRATION</span><div class="bm-kpi">${a.calibration}</div><p>How well certainty matched results.</p></div><div class="bm-panel"><span class="bm-note">AVG RESPONSE TIME</span><div class="bm-kpi">${a.avg_time}s</div><p>Context only; never a penalty.</p></div></div>${collaborationPanel(state.collaboration,window.BrainMaxI18n.translate)}<section class="bm-panel" style="margin-top:20px"><h2>Section scores</h2>${topicBars(a)}</section><p class="bm-note" style="margin-top:13px">Six questions are only a small sample. Scores describe this exercise, not a diagnosis or fixed ability.</p>`;
+    const verificationButton=root.querySelector('#bm-start-verification');
+    if(verificationButton)verificationButton.onclick=()=>runCoachAction({
+      type:'verification_retest',
+      assessment_id:openReview.latest_assessment_id,
+    },verificationButton);
     wireCollaborationPanel(window.BrainMaxI18n.translate);
     speak(`You have a ${a.score}/100 baseline. ${recommendation(a)}`,'growth-three','✅ Done',['Explain my score','My next step']);
   }
@@ -216,13 +414,13 @@
     const strongest=a?Object.entries(a.topics||{}).sort((first,second)=>second[1]-first[1])[0]:null;
     const providerNote=state.ai_ready
       ?state.preferences?.ai
-        ?t('AI coaching is on. Your message and the learning context described in Settings may be sent to the configured AI provider.')
+        ?t('AI coaching is on. Your message and the learning context described in Settings may be sent to the configured AI provider. When you ask why a path activity was assigned, its selection record is included; dated progress trends are shared only when history sharing is on.')
         :t('AI coaching is optional. Enable it in Settings for AI-generated support and feedback.')
       :t('Local support and feedback are available. AI-generated replies need a configured provider.');
-    root.innerHTML=`<div class="bm-head coach-page-head"><div><span class="bm-eyebrow">${t('One Step at a Time')}</span><h1>${t('Let’s talk about your progress.')}</h1><p>${t('Ask a question or request a personalized training plan.')}</p></div><div class="coach-language"><label for="coachLanguage">${t('Chat language')}</label><select id="coachLanguage" class="bm-coach-select"><option value="tn" ${language==='tn'?'selected':''}>${t('Tunisian Arabic')}</option><option value="en" ${language==='en'?'selected':''}>${t('English')}</option></select></div></div><div class="coach-layout"><section class="bm-panel coach-chat-panel"><p class="coach-note" id="coachPrivacyNote"></p><div class="coach-messages" id="chatMessages" role="log" aria-live="polite" aria-relevant="additions text"></div><form class="coach-form" id="chatForm"><label class="visually-hidden" for="chatInput">${t('Your message')}</label><input class="coach-input" id="chatInput" maxlength="500" autocomplete="off" placeholder="${t('e.g. How can I improve my focus?')}" required><button class="bm-btn coach-send" type="submit" aria-label="${t('Send')}">${t('Send')} ${pathIcon('arrow')}</button></form><p class="coach-chat-footnote">${t('Conversation history stays in this browser session.')}</p><div id="coachError" class="bm-error" role="alert"></div></section><aside class="bm-panel coach-insights"><div class="coach-insights-head"><h2>${t('Profile Insights')}</h2><p>${t('Supportive feedback based on your learning')}</p></div><div class="insight-item"><span class="coach-insight-icon">${pathIcon('spark')}</span><div><h3>${a?t('Your latest practice'):t('Start with one small step')}</h3><p>${a?`${t('Your latest score was')} ${a.score}/100. ${t('That is one practice snapshot, not a label.')}`:t('Complete an assessment and Brain can give feedback grounded in your results.')}</p></div></div><div class="insight-item"><span class="coach-insight-icon blue">${pathIcon('target')}</span><div><h3>${weakest?t('A useful focus'):t('Support at your pace')}</h3><p>${weakest?`${t('Consider practising')} ${esc(weakest[0])}. ${t('Small, steady steps are enough.')}`:t('Ask Brain for a practical plan or Pinky for a little encouragement.')}</p></div></div><div class="insight-item"><span class="coach-insight-icon violet">${pathIcon('book')}</span><div><h3>${strongest?t('Build on what is working'):t('Feedback without pressure')}</h3><p>${strongest?`${t('Your highest topic in this session was')} ${esc(strongest[0])} (${strongest[1]}%). ${t('Use it as a starting point for the next topic.')}`:t('Your coach can help you reflect, make a plan, or choose one manageable next action.')}</p><a class="coach-insight-link" href="/learning-path/">${t('View my learning path')} →</a></div></div></aside></div>`;
+    root.innerHTML=`<div class="bm-head coach-page-head"><div><span class="bm-eyebrow">${t('One Step at a Time')}</span><h1>${t('Let’s talk about your progress.')}</h1><p>${t('Ask a question or request a personalized training plan.')}</p></div><div class="coach-language"><label for="coachLanguage">${t('Chat language')}</label><select id="coachLanguage" class="bm-coach-select"><option value="tn" ${language==='tn'?'selected':''}>${t('Tunisian Arabic')}</option><option value="en" ${language==='en'?'selected':''}>${t('English')}</option></select></div></div><div class="coach-layout"><section class="bm-panel coach-chat-panel"><p class="coach-note" id="coachPrivacyNote"></p><div class="coach-messages" id="chatMessages" role="log" aria-live="polite" aria-relevant="additions text"></div><form class="coach-form" id="chatForm"><label class="visually-hidden" for="chatInput">${t('Your message')}</label><input class="coach-input" id="chatInput" maxlength="500" autocomplete="off" placeholder="${t('e.g. How can I improve my focus?')}" required><button class="bm-btn coach-send" type="submit" aria-label="${t('Send')}">${t('Send')} ${pathIcon('arrow')}</button></form><p class="coach-chat-footnote">${t('Tell Brain what you want done: open or start a page, change the next assessment subject, level or topic, adjust your learning path, profile, goals or settings, and pause or resume an assessment. Brain previews changes and waits for your confirmation. Applying an assessment or topic change starts a new assessment and replaces any in-progress assessment; completed results stay unchanged.')}</p><p class="coach-chat-footnote">${t('Your answers stay yours. Brain will not answer assessment questions or submit learning activities for you. Data deletion needs a separate confirmation; data export starts only when you choose the download button.')}</p><p class="coach-chat-footnote">${t('Name the exact concept you want to study today. Choose a reviewed cybersecurity topic such as phishing awareness, password safety, or encryption basics. For another topic, Brain can prepare a focused AI assessment and lesson when AI coaching is enabled.')}</p><p class="coach-chat-footnote">${t('Conversation history stays in this browser session.')}</p><div id="coachError" class="bm-error" role="alert"></div></section><aside class="bm-panel coach-insights"><div class="coach-insights-head"><h2>${t('Profile Insights')}</h2><p>${t('Supportive feedback based on your learning')}</p></div><div class="insight-item"><span class="coach-insight-icon">${pathIcon('spark')}</span><div><h3>${a?t('Your latest practice'):t('Start with one small step')}</h3><p>${a?`${t('Your latest score was')} ${a.score}/100. ${t('That is one practice snapshot, not a label.')}`:t('Complete an assessment and Brain can give feedback grounded in your results.')}</p></div></div><div class="insight-item"><span class="coach-insight-icon blue">${pathIcon('target')}</span><div><h3>${weakest?t('A useful focus'):t('Support at your pace')}</h3><p>${weakest?`${t('Consider practising')} ${esc(weakest[0])}. ${t('Small, steady steps are enough.')}`:t('Ask Brain for a practical plan or Pinky for a little encouragement.')}</p></div></div><div class="insight-item"><span class="coach-insight-icon violet">${pathIcon('book')}</span><div><h3>${strongest?t('Build on what is working'):t('Feedback without pressure')}</h3><p>${strongest?`${t('Your highest topic in this session was')} ${esc(strongest[0])} (${strongest[1]}%). ${t('Use it as a starting point for the next topic.')}`:t('Your coach can help you reflect, make a plan, or choose one manageable next action.')}</p><a class="coach-insight-link" href="/learning-path/">${t('View my learning path')} →</a></div></div></aside></div>`;
     root.querySelector('#coachPrivacyNote').textContent=providerNote;
     const messages=root.querySelector('#chatMessages');
-    const appendMessage=(speaker,content,kind='assistant',source='')=>{
+    const appendMessage=(speaker,content,kind='assistant',source='',actions=[])=>{
       const message=document.createElement('article');
       message.className=`coach-message ${kind}`;
       const avatar=document.createElement('span');
@@ -239,13 +437,18 @@
         label.textContent=source;
         bubble.append(label);
       }
+      addCoachActions(bubble,actions);
       message.append(avatar,bubble);
       messages.append(message);
       messages.scrollTop=messages.scrollHeight;
       return message;
     };
     appendMessage('AI',`${t('Hello')}, ${root.dataset.name}! ${t('Would you like to review your latest score or prepare your next session?')}`);
-    chatHistory.forEach(item=>appendMessage(item.role==='user'?t('You'):'AI',item.content,item.role));
+    chatHistory.forEach(item=>appendMessage(
+      item.role==='user'?t('You'):'AI',
+      item.role==='assistant'?readableCoachMessage(item.content):item.content,
+      item.role,
+    ));
     root.querySelector('#coachLanguage').onchange=event=>localStorage.setItem('coachLanguage',event.currentTarget.value);
     root.querySelector('#chatForm').onsubmit=async event=>{
       event.preventDefault();
@@ -253,7 +456,7 @@
       const send=root.querySelector('.coach-send');
       const text=input.value.trim();
       if(!text||busy)return;
-      const inAssessment=Boolean(state.assessment&&!state.assessment.completed);
+      const inAssessment=page==='assessment'&&Boolean(state.assessment&&!state.assessment.completed);
       const requested=inAssessment?'assessment':state.latest_completed?'debrief':'learning';
       chatHistory.push({role:'user',content:text});
       sessionStorage.setItem(chatStorageKey,JSON.stringify(chatHistory));
@@ -274,9 +477,25 @@
         });
         pending.remove();
         const speaker=result.speaker==='pinky'?'Pinky':'AI';
-        appendMessage(speaker,result.message,'assistant',result.source);
-        chatHistory.push({role:'assistant',content:result.message});
+        const assistantMessage=appendMessage(
+          speaker,result.message,'assistant',result.source,result.actions,
+        );
+        chatHistory.push({
+          role:'assistant',
+          content:readableCoachMessage(result.message),
+        });
         sessionStorage.setItem(chatStorageKey,JSON.stringify(chatHistory));
+        const navigation=result.actions?.find(action=>action.type==='navigate_page');
+        if(navigation){
+          speak(
+            `${result.message} Choose the action button to continue.`,
+            result.mode==='assessment'?'quiet':'neutral',
+            result.source||'READY TO HELP',
+            [],
+            speaker==='Pinky'?'pinky':'brain'
+          );
+          return;
+        }
         speak(result.message,result.mode==='assessment'?'quiet':'neutral',result.source||'READY TO HELP',[],speaker==='Pinky'?'pinky':'brain');
       }catch(error){
         pending.remove();
@@ -288,7 +507,7 @@
         input.focus();
       }
     };
-    speak('Your coach is ready. Ask Brain for a learning plan or Pinky for support.','neutral','👀 Listening');
+    speak('Your coach is ready. Tell Brain what you need done or ask Pinky for support.','neutral','👀 Listening');
   }
   function topicBars(a){return Object.entries(a.topics||{}).map(([topic,score])=>`<div class="bm-topic"><div class="bm-topic-line"><span>${esc(topic)}</span><span>${score}%</span></div><div class="bm-progress" role="progressbar" aria-label="${esc(topic)} score" aria-valuenow="${score}" aria-valuemin="0" aria-valuemax="100"><span style="width:${score}%"></span></div></div>`).join('');}
   function trendChart(history){
@@ -302,6 +521,30 @@
     const labels=[points[0],points[Math.floor((points.length-1)/2)],points[points.length-1]].filter((point,index,all)=>all.findIndex(item=>item.x===point.x)===index).map(point=>`<text x="${point.x}" y="${height-12}" text-anchor="middle" class="bm-chart-axis">${esc(point.item.date)}</text>`).join('');
     return `<div class="bm-chart-wrap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Score history across ${history.length} completed sessions">${grid}<polygon points="${area}" class="bm-chart-area"/><polyline points="${line}" class="bm-chart-line"/>${dots}${labels}</svg></div>`;
   }
+  const formatRadarLabel = value => String(value ?? '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b([a-z])([a-z]*)/g, (_, first, rest) => first.toUpperCase() + rest)
+    .replace(/\bAi\b/g, 'AI')
+    .replace(/\bMl\b/g, 'ML');
+  const wrapRadarLabel = (value, limit = 18) => {
+    const words = String(value ?? '').split(/\s+/).filter(Boolean);
+    if (!words.length) return [''];
+    const lines = [];
+    let current = '';
+    words.forEach(word => {
+      const candidate = current ? `${current} ${word}` : word;
+      if (candidate.length > limit && current) {
+        lines.push(current);
+        current = word;
+      } else {
+        current = candidate;
+      }
+    });
+    if (current) lines.push(current);
+    return lines.length ? lines : [''];
+  };
   function skillRadar(topics){
     const entries=Object.entries(topics||{}),width=440,height=360,centerX=width/2,centerY=height/2,radius=88;
     if(entries.length<3)return '<p>Complete a session covering at least three topics to build a skill radar.</p>';
@@ -313,18 +556,78 @@
       const x=centerX+Math.cos(angle)*(radius+37);
       const y=centerY+Math.sin(angle)*(radius+37);
       const anchor=Math.cos(angle)>.3?'start':Math.cos(angle)<-.3?'end':'middle';
-      const lines=String(topic).split(/\s+/);
-      const wrapped=[];
-      let line='';
-      lines.forEach(word=>{
-        if(line&&`${line} ${word}`.length>13){wrapped.push(line);line=word;}
-        else line=line?`${line} ${word}`:word;
-      });
-      if(line)wrapped.push(line);
-      const textLines=[...wrapped,`${score}%`];
+      const lines=wrapRadarLabel(formatRadarLabel(topic));
+      const textLines=[...lines,`${score}%`];
       return `<text x="${x}" y="${y-((textLines.length-1)*6)}" text-anchor="${anchor}" class="bm-radar-label">${textLines.map((text,lineIndex)=>`<tspan x="${x}" dy="${lineIndex===0?0:13}" class="${lineIndex===textLines.length-1?'bm-radar-score':''}">${esc(text)}</tspan>`).join('')}</text>`;
     }).join('');
-    return `<div class="bm-radar-wrap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Latest session topic scores from zero to one hundred. A larger area indicates higher scores.">${rings}${axes}<polygon points="${entries.map(([,score],index)=>point(index,score)).join(' ')}" class="bm-radar-value"/>${entries.map(([,score],index)=>{const [cx,cy]=point(index,score).split(',');return `<circle cx="${cx}" cy="${cy}" r="4" class="bm-radar-dot"><title>${esc(entries[index][0])}: ${score}%</title></circle>`;}).join('')}${labels}</svg></div>`;
+    return `<div class="bm-radar-wrap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Latest session topic scores, shown separately for each topic from zero to one hundred.">${rings}${axes}<polygon points="${entries.map(([,score],index)=>point(index,score)).join(' ')}" class="bm-radar-value"/>${entries.map(([,score],index)=>{const [cx,cy]=point(index,score).split(',');return `<circle cx="${cx}" cy="${cy}" r="4" class="bm-radar-dot"><title>${esc(entries[index][0])}: ${score}%</title></circle>`;}).join('')}${labels}</svg></div>`;
+  }
+  function dimensionRadarPanel(path,t){
+    const dimensions=path.dimensions||[],radar=path.radar||{};
+    if(!dimensions.length)return '';
+    const width=640,height=520,cx=width/2,cy=height/2,radius=150;
+    const axes=radar.axes||dimensions.map(item=>item.name);
+    const point=(index,value)=>{
+      const angle=(index*2*Math.PI/axes.length)-Math.PI/2;
+      const scale=radius*Math.max(0,Math.min(100,Number(value)||0))/100;
+      return `${cx+Math.cos(angle)*scale},${cy+Math.sin(angle)*scale}`;
+    };
+    const polygon=values=>values.map((value,index)=>point(index,value??0)).join(' ');
+    const rings=[25,50,75,100].map(level=>`<polygon points="${polygon(axes.map(()=>level))}" class="bm-radar-grid"/>`).join('');
+    const axisLines=axes.map((_,index)=>`<line x1="${cx}" y1="${cy}" x2="${point(index,100).split(',')[0]}" y2="${point(index,100).split(',')[1]}" class="bm-radar-axis"/>`).join('');
+    const uncertainty=radar.uncertainty||[];
+    const bandPoints=[
+      ...uncertainty.map((item,index)=>point(index,item.upper)),
+      ...uncertainty.map((item,index)=>point(uncertainty.length-1-index,uncertainty[uncertainty.length-1-index].lower)),
+    ].join(' ');
+    const previous=(radar.previous||[]).filter(value=>value!==null&&value!==undefined);
+    const previousLine=previous.length===axes.length
+      ?`<polygon points="${polygon(radar.previous)}" class="bm-radar-previous"/>`
+      :'';
+    const targetLine=`<polygon points="${polygon(radar.target||axes.map(()=>70))}" class="bm-radar-target"/>`;
+    const valuesLine=`<polygon points="${polygon(radar.values||[])}" class="bm-radar-value"/>`;
+    const labels=axes.map((name,index)=>{
+      const angle=(index*2*Math.PI/axes.length)-Math.PI/2;
+      const x=cx+Math.cos(angle)*(radius+54),y=cy+Math.sin(angle)*(radius+54);
+      const anchor=Math.cos(angle)>.3?'start':Math.cos(angle)<-.3?'end':'middle';
+      const labelText=formatRadarLabel(name);
+      const labelLines=wrapRadarLabel(labelText, 16);
+      const textLines=[...labelLines, `${Number(radar.values?.[index]||0).toFixed(1)}%`];
+      return `<text x="${x}" y="${y-((textLines.length-1)*10)}" text-anchor="${anchor}" class="bm-radar-label">${textLines.map((text,lineIndex)=>`<tspan x="${x}" dy="${lineIndex===0?0:14}" class="${lineIndex===textLines.length-1?'bm-radar-score':''}">${esc(text)}</tspan>`).join('')}</text>`;
+    }).join('');
+    const legend=`<div class="bm-dimension-legend"><span><i class="current"></i>${t('Current')}</span><span><i class="target"></i>${t('Practice target')}</span>${previousLine?`<span><i class="previous"></i>${t('Previous snapshot')}</span>`:''}<span><i class="uncertainty"></i>${t('Uncertainty range')}</span></div>`;
+    const provisional=path.asymmetry?.verified
+      ?t('Profile checks completed across repeated sessions.')
+      :t('Provisional profile: more evidence is needed before confirming a persistent difference.');
+    const checkLabels={
+      ceiling:{
+        stretch_item_present:'A challenging item was included.',
+        probe_upward_before_confirming:'A harder item is needed to check the upper level.',
+        not_checked:'Not checked yet.',
+      },
+      floor:{
+        response_format_signals_available:'Response pacing supports the current format.',
+        try_an_easier_or_clearer_variant:'Try an easier or clearer format before drawing a conclusion.',
+        not_checked:'Not checked yet.',
+      },
+      context:{
+        context_signals_reviewed:'Available context signals were reviewed.',
+        context_or_fatigue_signals_uncertain:'Context or fatigue may still affect this result.',
+        no_attention_sensitive_dimension:'No attention-sensitive dimension was identified.',
+        not_checked:'Not checked yet.',
+      },
+    };
+    const checks=Object.entries(path.asymmetry?.checks||{}).map(([key,value])=>`<li><strong>${t(key)}:</strong> ${t(checkLabels[key]?.[value]||String(value).replaceAll('_',' '))}</li>`).join('');
+    const verificationNote=checks?`<details class="bm-dimension-checks"><summary>${t('How this profile was checked')}</summary><ul>${checks}</ul></details>`:'';
+    const dimensionForecasts=dimensions.map(item=>{
+      const forecast=item.forecast;
+      if(!forecast||forecast.data_sufficiency==='insufficient')return '';
+      return `<li><strong>${esc(item.name)}:</strong> ${t('next-practice range')} ${forecast.low}–${forecast.high} · ${t(forecast.confidence||'low confidence')}</li>`;
+    }).filter(Boolean).join('');
+    const forecastPanel=dimensionForecasts
+      ?`<h3>${t('Separate topic projections')}</h3><p>${t('Each range is estimated independently; they are not combined into one score.')}</p><ul class="bm-dimension-alt">${dimensionForecasts}</ul>`
+      :`<p class="bm-note">${t('More sessions are needed for separate topic projections.')}</p>`;
+    return `<section class="bm-panel bm-dimension-panel"><span class="bm-eyebrow">${t('SKILL PROFILE · TOPICS ARE SEPARATE')}</span><h2>${t('A different pace for each topic')}</h2><p>${esc(path.pinky_message||provisional)}</p>${radar.annotation?`<p class="bm-dimension-annotation">${esc(radar.annotation)}</p>`:''}<div class="bm-radar-wrap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(radar.alt_text||axes.join(', '))}. Each axis is a separate topic; polygon area is not a total score.">${rings}${axisLines}<polygon points="${bandPoints}" class="bm-radar-uncertainty"/>${previousLine}${targetLine}${valuesLine}${labels}</svg></div>${legend}<p class="bm-radar-caption">${t('Each axis represents a separate topic. The chart shape is not a combined score; read each topic value below.')}</p><ul class="bm-dimension-alt">${dimensions.map(item=>`<li><strong>${esc(item.name)}:</strong> ${(item.theta*100).toFixed(1)}% · ${t(item.level)} · ${t('Next difficulty')}: ${t(({1:'Foundation',2:'Building',3:'Stretch'})[item.difficulty_target]||'Foundation')} · ${Math.round(item.time_share*100)}% ${t('practice time')}</li>`).join('')}</ul>${forecastPanel}${verificationNote}<p class="bm-note">${provisional}</p></section>`;
   }
   function activityHeatmap(activity){
     if(!activity?.length)return '<p>Complete a session to start your practice activity history.</p>';
@@ -338,17 +641,119 @@
     speak('Choose a subject and share your goal. I’ll help you make the next step easy.','neutral','👀 Listening',['Make a plan']);
   }
 
+  function showPinkyEngagement(result,assessmentId){
+    root.querySelector('#bm-engagement-panel')?.remove();
+    const paused=Boolean(result.ui?.pause_session);
+    if(state.assessment)state.assessment.engagement_paused=paused;
+    const next=root.querySelector('#bm-next');
+    if(next)next.disabled=paused;
+    if(result.action==='END_OFFER'&&!result.ui?.buttons?.length){
+      window.location.href='/dashboard/';
+      return;
+    }
+    if(!result.message&&!paused)return;
+    const panel=document.createElement('section');
+    panel.id='bm-engagement-panel';
+    panel.className='bm-panel bm-engagement-panel';
+    panel.setAttribute('role','status');
+    panel.setAttribute('aria-live','polite');
+    const heading=document.createElement('strong');
+    heading.textContent='Pinky · check-in';
+    const message=document.createElement('p');
+    message.textContent=result.message||'Your assessment is paused. Choose when you are ready to continue.';
+    panel.append(heading,message);
+    const choices=document.createElement('div');
+    choices.className='bm-engagement-actions';
+    const sendReply=reply=>task(async()=>{
+      const response=await api('engagement',{
+        assessment_id:assessmentId,
+        user_reply:reply,
+      });
+      if(state.assessment)state.assessment.engagement_paused=Boolean(response.ui?.pause_session);
+      showPinkyEngagement(response,assessmentId);
+      speak(response.message,'quiet','💗 Pinky is here',[], 'pinky');
+    });
+    (result.ui?.buttons||[]).forEach(label=>{
+      const action=document.createElement('button');
+      action.type='button';
+      action.className='bm-btn secondary';
+      action.textContent=label;
+      action.onclick=()=>sendReply(label);
+      choices.append(action);
+    });
+    if(paused&&!result.ui?.buttons?.length){
+      const resume=document.createElement('button');
+      resume.type='button';
+      resume.className='bm-btn secondary';
+      resume.textContent='Resume assessment';
+      resume.onclick=()=>sendReply('resume');
+      choices.append(resume);
+    }
+    if(choices.childElementCount)panel.append(choices);
+    root.querySelector('.bm-progress')?.after(panel);
+    if(paused&&next)next.disabled=true;
+  }
   function assessment(){const a=state.assessment;if(!state.profile?.subject){root.innerHTML=head('ASSESSMENT','Start with your profile.','Choose a subject so I can prepare six focused questions.')+`<div class="bm-panel">${button('/profile/','Set up profile')}</div>`;mode('learning');speak('First, choose your subject in Profile.','neutral','👀 Listening');return;}
     if(a?.completed){debrief(a);return;}
     if(!a){mode('learning');root.innerHTML=head('ASSESSMENT',`${esc(subjects[state.profile.subject])} baseline`,'Six questions selected from a reviewed pool. No time limit; take each question at your own pace.')+`<div class="bm-panel"><span class="bm-tag">READY</span><h2 style="margin-top:16px">Find your starting point</h2><p>Choose an answer and confidence for each question. Brain will help you review definitions and results when you finish.</p><button id="bm-start" class="bm-btn">Start assessment →</button><div id="bm-error" class="bm-error"></div></div>`;root.querySelector('#bm-start').onclick=()=>task(async()=>{state.assessment=await api('assessment',{});assessment();});speak('Let’s find your starting point. I’ll help you make sense of the results when you’re done.','growth-one','👋 Here to help');return;}
-    mode('assessment');choice=null;confidence=null;const n=a.answers_count+1, q=a.question, section=Math.ceil(n/2);root.innerHTML=head('ASSESSMENT',`${esc(a.subject_name)} adaptive practice`,'Difficulty is adjusted from your profile and previous topic results; it can move up or down as you practise.')+`<div class="bm-qhead"><span class="bm-tag">Section ${section} of 3 · ${esc(q.topic)} · ${esc(a.difficulty||'Foundation')}</span><strong>Question ${n} of ${a.total}</strong></div><div class="bm-progress"><span style="width:${Math.round(a.answers_count/a.total*100)}%"></span></div><div class="bm-panel" style="margin-top:20px"><div class="bm-question">${esc(q.prompt)}</div><div class="bm-options">${q.choices.map((v,i)=>`<button class="bm-option" data-choice="${i}" type="button" aria-pressed="false"><b>${'ABCD'[i]}</b>${esc(v)}</button>`).join('')}</div><p id="bm-selected-choice" class="bm-selected-choice" aria-live="polite">Choose one answer.</p><div class="bm-field" style="margin-top:24px"><label>How confident are you?</label><div class="bm-confidence">${[25,50,75,100].map(v=>`<button class="bm-choice" type="button" data-confidence="${v}" aria-pressed="false">${v}%</button>`).join('')}</div></div><div id="bm-error" class="bm-error" role="alert"></div><div class="bm-form-actions"><span class="bm-note">Results and concept explanations appear when you finish.</span><button id="bm-next" class="bm-btn">${n===a.total?'Submit assessment':'Save & next question'} →</button></div></div>`;
+    mode('assessment');choice=null;confidence=null;const n=a.answers_count+1, q=a.question, section=Math.min(3,Math.ceil(n/Math.max(1,Math.ceil(a.total/3))));root.innerHTML=head('ASSESSMENT',`${esc(a.subject_name)} adaptive practice`,'Difficulty is adjusted from your profile and previous topic results; it can move up or down as you practise.')+`<div class="bm-qhead"><span class="bm-tag">Section ${section} of 3 · ${esc(q.topic)} · ${esc(a.difficulty||'Foundation')}</span><strong>Question ${n} of ${a.total}</strong></div><div class="bm-progress"><span style="width:${Math.round(a.answers_count/a.total*100)}%"></span></div><div class="bm-panel" style="margin-top:20px"><div class="bm-question">${esc(q.prompt)}</div><div class="bm-options">${q.choices.map((v,i)=>`<button class="bm-option" data-choice="${i}" type="button" aria-pressed="false"><b>${'ABCD'[i]}</b>${esc(v)}</button>`).join('')}</div><p id="bm-selected-choice" class="bm-selected-choice" aria-live="polite">Choose one answer.</p><div class="bm-field" style="margin-top:24px"><label>How confident are you?</label><div class="bm-confidence">${[25,50,75,100].map(v=>`<button class="bm-choice" type="button" data-confidence="${v}" aria-pressed="false">${v}%</button>`).join('')}</div></div><div id="bm-error" class="bm-error" role="alert"></div><div class="bm-form-actions"><span class="bm-note">Results and concept explanations appear when you finish.</span><button id="bm-next" class="bm-btn">${n===a.total?'Submit assessment':'Save & next question'} →</button></div></div>`;
+    if(q.requeued){
+      const sectionTag=root.querySelector('.bm-qhead .bm-tag');
+      if(sectionTag)sectionTag.textContent=`Retry flagged question · ${q.topic} · ${a.difficulty||'Foundation'}`;
+    }
     root.querySelectorAll('[data-choice]').forEach(b=>b.onclick=()=>{choice=Number(b.dataset.choice);root.querySelectorAll('[data-choice]').forEach(x=>{x.classList.toggle('selected',x===b);x.setAttribute('aria-pressed',String(x===b));});root.querySelector('#bm-selected-choice').textContent=`Selected: ${q.choices[choice]}`;});
     root.querySelectorAll('[data-confidence]').forEach(b=>b.onclick=()=>{confidence=Number(b.dataset.confidence);root.querySelectorAll('[data-confidence]').forEach(x=>{x.classList.toggle('selected',x===b);x.setAttribute('aria-pressed',String(x===b));});});
-    root.querySelector('#bm-next').onclick=()=>{if(choice===null||confidence===null){root.querySelector('#bm-error').textContent='Choose an answer and confidence level.';return;}task(async()=>{try{state.assessment=await api('answer',{assessment_id:a.id,index:a.answers_count,choice,confidence});}catch(e){if(e.status!==409)throw e;state=await api('state');assessment();return;}if(state.assessment.completed){debrief(state.assessment);}else{assessment();if(n%2===0)speak(`Question ${n} saved. You’re making steady progress.`, 'quiet','🌱 Progress saved');}});};
-    speak(n===1?'Let’s take this one question at a time. Choose what feels right for you.':`Question ${n} of ${a.total}. Take your time; there’s no clock running.`, 'quiet','👋 Here to help');
+    questionTelemetry={startedAt:performance.now(),stimulus_seen:false,tab_blurred:false};
+    lastQuestionActivity=questionTelemetry.startedAt;
+    root.querySelector('.bm-question').addEventListener('pointerenter',()=>{questionTelemetry.stimulus_seen=true;});
+    root.querySelector('#bm-next').onclick=()=>{if(choice===null||confidence===null){root.querySelector('#bm-error').textContent='Choose an answer and confidence level.';return;}const now=performance.now();const telemetry={active_ms:Math.max(0,Math.round(now-questionTelemetry.startedAt)),stimulus_seen:questionTelemetry.stimulus_seen,tab_blurred:questionTelemetry.tab_blurred,inactive_gap:now-lastQuestionActivity>15000};task(async()=>{try{state.assessment=await api('answer',{assessment_id:a.id,index:a.answers_count,choice,confidence,telemetry});}catch(e){if(e.status!==409)throw e;state=await api('state');assessment();return;}questionTelemetry=null;if(state.assessment.completed){debrief(state.assessment);}else{const intervention=state.assessment.engagement_intervention;assessment();if(intervention){showPinkyEngagement(intervention,state.assessment.id);speak(intervention.message,'quiet','💗 Pinky is here',[],'pinky');}else if(n%2===0)speak(`Question ${n} saved. You’re making steady progress.`, 'quiet','🌱 Progress saved');}});};
+    if(a.engagement_paused){
+      const currentIntervention=a.engagement_intervention||{
+        action:'CHECK_IN',
+        message:'Your assessment is paused. Choose when you are ready to continue.',
+        ui:{pause_session:true,buttons:[]},
+      };
+      showPinkyEngagement(currentIntervention,a.id);
+      speak(currentIntervention.message,'quiet','💗 Pinky is here',[],'pinky');
+    }else{
+      speak(n===1?'Let’s take this one question at a time. Choose what feels right for you.':`Question ${n} of ${a.total}. Take your time; there’s no clock running.`, 'quiet','👋 Here to help');
+    }
   }
-  function debrief(a){mode('debrief');const weakest=Object.entries(a.topics).sort((x,y)=>x[1]-y[1])[0];root.innerHTML=head('ASSESSMENT COMPLETE','Your starting point, explained.',`${esc(a.subject_name)} · ${esc(a.date)}`,`<button id="bm-retake" class="bm-btn secondary">Take another assessment →</button>`)+`<div class="bm-grid bm-result-overview"><section class="bm-panel bm-score-hero"><div class="bm-score-copy"><span class="bm-eyebrow">SESSION SCORE</span><div class="bm-score-number">${a.score}<small>/100</small></div><div class="bm-score-progress" role="progressbar" aria-label="Score" aria-valuenow="${a.score}" aria-valuemin="0" aria-valuemax="100"><span style="width:${a.score}%"></span></div><h2>${esc(a.level)}</h2><p>Correct answers without hints ÷ ${a.total} × 100.</p></div></section><section class="bm-panel bm-result-topics"><div class="bm-result-card-heading"><span class="bm-tag">QUICK SNAPSHOT</span><h2>Section breakdown</h2><p>Two questions per section, so treat these as a small snapshot.</p></div>${topicBars(a)}</section></div><section class="bm-result-metrics"><div class="bm-result-section-heading"><span class="bm-eyebrow">A CLOSER LOOK</span><h2>What this score means</h2><p>A few helpful details from this session.</p></div><div class="bm-grid three"><article class="bm-panel bm-metric-card"><span class="bm-metric-icon" aria-hidden="true">01</span><div><span class="bm-note">Accuracy</span><div class="bm-kpi">${a.accuracy}%</div><p>Answers correct, including those with hints.</p></div></article><article class="bm-panel bm-metric-card"><span class="bm-metric-icon" aria-hidden="true">02</span><div><span class="bm-note">Confidence alignment</span><div class="bm-kpi">${a.calibration}<small>/100</small></div><p>How closely confidence matched your answers.</p></div></article><article class="bm-panel bm-metric-card"><span class="bm-metric-icon" aria-hidden="true">03</span><div><span class="bm-note">Independent answers</span><div class="bm-kpi">${a.independence}%</div><p>Questions answered without a hint.</p></div></article></div></section><section class="bm-panel bm-next-step"><span class="bm-eyebrow">SUGGESTED NEXT STEP</span><h2>Brain’s first recommendation</h2><p>Review <strong>${esc(weakest[0])}</strong>, then practise a new example at your own pace.</p><span class="bm-note">Based on your latest six answers. This is not a validated cognitive measure.</span></section><section class="bm-panel bm-answer-review"><div class="bm-result-section-heading"><span class="bm-eyebrow">LEARN FROM EACH QUESTION</span><h2>Review your answers</h2><p>Open a question to see your answer and explanation. Ask Brain to define your choice if you’d like more context.</p></div>${a.review.map((r,i)=>`<details class="bm-review"><summary><span class="bm-review-number">${String(i+1).padStart(2,'0')}</span><span class="bm-review-question">${esc(r.prompt)}</span><span class="bm-review-status ${r.correct?'is-correct':'needs-review'}">${r.correct?'Correct':'Review'}</span></summary><div class="bm-review-content"><p><span>Your answer:</span> ${esc(r.chosen)}<br><span>Expected:</span> ${esc(r.expected)}</p><p>${esc(r.explanation)}</p><p class="bm-review-meta"><small>Confidence ${r.confidence}% · ${r.seconds}s · ${r.hint?'Hint used':'No hint'}</small></p><button class="bm-btn secondary" type="button" data-definition="${i}">Define my choice</button><p class="bm-definition" id="bm-definition-${i}" aria-live="polite"></p></div></details>`).join('')}</section><p class="bm-note bm-result-footnote">Questions are randomized from a reviewed pool. Identical sets are avoided across learners while combinations remain available; each learner sees no repeats per section until its question pool is exhausted.</p>`;
-    root.querySelector('#bm-retake').onclick=()=>task(async()=>{state.assessment=await api('assessment',{});assessment();});
+  function debrief(a){mode('debrief');const weakest=Object.entries(a.topics).sort((x,y)=>x[1]-y[1])[0];const title=a.verification_for?'Your verification check, explained.':'Your starting point, explained.';root.innerHTML=head('ASSESSMENT COMPLETE',title,`${esc(a.subject_name)} · ${esc(a.date)}`,`<button id="bm-retake" class="bm-btn secondary">Take another assessment →</button>`)+`<div class="bm-grid bm-result-overview"><section class="bm-panel bm-score-hero"><div class="bm-score-copy"><span class="bm-eyebrow">SESSION SCORE</span><div class="bm-score-number">${a.score}<small>/100</small></div><div class="bm-score-progress" role="progressbar" aria-label="Score" aria-valuenow="${a.score}" aria-valuemin="0" aria-valuemax="100"><span style="width:${a.score}%"></span></div><h2>${esc(a.level)}</h2><p>Correct answers without hints ÷ ${a.total} × 100.</p></div></section><section class="bm-panel bm-result-topics"><div class="bm-result-card-heading"><span class="bm-tag">QUICK SNAPSHOT</span><h2>Section breakdown</h2><p>${a.total} questions in this session; treat these as a small snapshot.</p></div>${topicBars(a)}</section></div><section class="bm-result-metrics"><div class="bm-result-section-heading"><span class="bm-eyebrow">A CLOSER LOOK</span><h2>What this score means</h2><p>A few helpful details from this session.</p></div><div class="bm-grid three"><article class="bm-panel bm-metric-card"><span class="bm-metric-icon" aria-hidden="true">01</span><div><span class="bm-note">Accuracy</span><div class="bm-kpi">${a.accuracy}%</div><p>Answers correct, including those with hints.</p></div></article><article class="bm-panel bm-metric-card"><span class="bm-metric-icon" aria-hidden="true">02</span><div><span class="bm-note">Confidence alignment</span><div class="bm-kpi">${a.calibration}<small>/100</small></div><p>How closely confidence matched your answers.</p></div></article><article class="bm-panel bm-metric-card"><span class="bm-metric-icon" aria-hidden="true">03</span><div><span class="bm-note">Independent answers</span><div class="bm-kpi">${a.independence}%</div><p>Questions answered without a hint.</p></div></article></div></section><section class="bm-panel bm-next-step"><span class="bm-eyebrow">SUGGESTED NEXT STEP</span><h2>Brain’s first recommendation</h2><p>Review <strong>${esc(weakest[0])}</strong>, then practise a new example at your own pace.</p><span class="bm-note">Based on your latest ${a.total} answers. This is not a validated cognitive measure.</span></section><section class="bm-panel bm-answer-review"><div class="bm-result-section-heading"><span class="bm-eyebrow">LEARN FROM EACH QUESTION</span><h2>Review your answers</h2><p>Open a question to see your answer and explanation. Ask Brain to define your choice if you’d like more context.</p></div>${a.review.map((r,i)=>`<details class="bm-review"><summary><span class="bm-review-number">${String(i+1).padStart(2,'0')}</span><span class="bm-review-question">${esc(r.prompt)}</span><span class="bm-review-status ${r.correct?'is-correct':'needs-review'}">${r.correct?'Correct':'Review'}</span></summary><div class="bm-review-content"><p><span>Your answer:</span> ${esc(r.chosen)}<br><span>Expected:</span> ${esc(r.expected)}</p><p>${esc(r.explanation)}</p><p class="bm-review-meta"><small>Confidence ${r.confidence}% · ${r.seconds}s · ${r.hint?'Hint used':'No hint'}</small></p><button class="bm-btn secondary" type="button" data-definition="${i}">Define my choice</button><p class="bm-definition" id="bm-definition-${i}" aria-live="polite"></p></div></details>`).join('')}</section><p class="bm-note bm-result-footnote">Questions are randomized from a reviewed pool. Identical sets are avoided across learners while combinations remain available; each learner sees no repeats per section until its question pool is exhausted.</p>`;
+    if(a.plateau?.intervention_required){
+      root.querySelector('.bm-next-step')?.insertAdjacentHTML('beforebegin',`<aside class="bm-pinky-correction bm-plateau-coaching" role="status"><strong>Pinky · A fresh approach</strong><p>${esc(a.plateau.message)}</p></aside>`);
+    }
+    if(a.reliable_answer_count<a.validity_total){
+      const quarantined=a.validity_total-a.reliable_answer_count;
+      const note=document.createElement('p');
+      note.className='bm-note bm-reliability-note';
+      note.textContent=`Result based on ${a.reliable_answer_count} of ${a.validity_total} reliable responses. ${quarantined} low-confidence responses were excluded without penalty; the confidence range was widened.`;
+      root.querySelector('.bm-score-copy')?.append(note);
+      const formula=root.querySelector('.bm-score-copy p');
+      if(formula)formula.textContent=`Correct answers without hints ÷ ${a.reliable_answer_count} reliable responses × 100.`;
+      a.review.forEach((row,index)=>{
+        if(row.validity!=='low_confidence')return;
+        const detail=root.querySelectorAll('.bm-review')[index];
+        const status=detail?.querySelector('.bm-review-status');
+        if(status){status.textContent='Not scored · low confidence';status.classList.add('needs-review');}
+        const content=detail?.querySelector('.bm-review-content');
+        if(content){
+          const label=document.createElement('p');
+          label.className='bm-note';
+          label.textContent='This response was set aside as unreliable and did not lower your result.';
+          content.prepend(label);
+        }
+      });
+    }
+    const retakeButton = root.querySelector('#bm-retake');
+    if (retakeButton) {
+      retakeButton.type = 'button';
+      retakeButton.onclick = event => {
+        event.preventDefault();
+        event.stopPropagation();
+        window.location.assign('/assessment/?start=1');
+      };
+    }
     const t=window.BrainMaxI18n.translate;
     const overview=root.querySelector('.bm-result-overview');
     const topicSummary=overview?.querySelector('.bm-result-topics')?.outerHTML;
@@ -359,7 +764,8 @@
     const nextStep=root.querySelector('.bm-next-step');
     nextStep?.insertAdjacentHTML('beforeend',button('/learning-path/',t('Continue to your learning path'),true));
     root.querySelectorAll('[data-definition]').forEach(button=>button.onclick=()=>task(async()=>{button.disabled=true;const index=Number(button.dataset.definition);try{const result=await api('definition',{assessment_id:a.id,index});const message=`${result.concept}. ${result.definition}`;root.querySelector(`#bm-definition-${index}`).textContent=message;speak(message,'growth-one','📘 Concept defined');}finally{button.disabled=false;}}));
-    speak(`Assessment complete. You scored ${a.score}/100. Review ${weakest[0]} first, then ask me to define any choice.`,a.score>=80?'confident':'growth-one','✅ Results ready',['Explain my score','My next step']);
+    if(a.plateau?.intervention_required)speak(a.plateau.message,'neutral','💗 Pinky suggests a fresh approach',[],'pinky');
+    else speak(`Assessment complete. You scored ${a.score}/100. Review ${weakest[0]} first, then ask me to define any choice.`,a.score>=80?'confident':'growth-one','✅ Results ready',['Explain my score','My next step']);
   }
   function pathBaselinePanel(baseline,t){
     if(!baseline)return '';
@@ -382,11 +788,19 @@
     const autonomyNote=data.autonomy_evidence===null||data.autonomy_evidence===undefined
      ?t('No collaboration results are available yet.')
      :`${t('Autonomy also reflects')} ${data.autonomy_evidence}% ${t('unhinted answers in your latest assessment.')}`;
+    const challengeNote=data.challenge_credit?.challenge_count
+      ?`<p class="bm-note">${t('Evidence-based review credit')}: +${data.challenge_credit.critical_verification} ${t('critical verification')} · +${data.challenge_credit.iteration} ${t('iteration')}.</p>`
+      :'';
+    const review=data.profile_review||{};
+    const affectedQuestions=(review.affected_questions||[]).map(esc).join(', ');
+    const reviewNote=review.status==='under_review'
+      ?`<div class="bm-note"><p>${t('Your assessment is under review. Its score has not changed.')}</p>${affectedQuestions?`<p>${t('Affected questions')}: ${affectedQuestions}</p>`:''}<p>${t('Challenge quality')}: ${Math.round((review.challenge_quality||0)*100)}% · ${t('Credibility')}: ${Math.round((review.credibility||0)*100)}% · ${t('Uncertainty change')}: ×${esc(review.uncertainty_multiplier||1)} · ${t('Item weight')}: ${Math.round((review.item_weight||1)*100)}%.</p><p>${t('AI stance integrity')}: ${esc(review.ai_stance_integrity??100)}% · ${t('Claim-reliability prior')}: ${Math.round((review.claim_reliability_prior??0.5)*100)}%.</p></div>`
+      :'';
     const ratings=collaborationDimensions.map(([key,label,,description])=>{
       const value=data.ratings?.[key]??50;
       return `<label class="bm-collaboration-rating" for="bm-collaboration-${key}"><span>${t(label)}</span><output id="bm-collaboration-${key}-value" for="bm-collaboration-${key}">${esc(value)}</output><input id="bm-collaboration-${key}" name="${key}" type="range" min="0" max="100" step="1" value="${esc(value)}" data-collaboration-rating><small>${t(description)}</small></label>`;
     }).join('');
-    return `<section class="bm-panel bm-collaboration-panel"><div class="bm-collaboration-heading"><div><span class="bm-eyebrow">${t('PROVISIONAL · NOT VALIDATED')}</span><h2>${t('AI Collaboration Score')}</h2><p>${t('A reflective snapshot of how you work with AI—not a measure of ability.')}</p></div><div class="bm-collaboration-score"><strong>${score}</strong><span>${t('provisional score')}</span></div></div><div class="bm-collaboration-components">${componentCards}</div><p class="bm-note">${autonomyNote} ${t('This is a design proposal, not a validated measure.')}</p><form id="bm-collaboration-form" class="bm-collaboration-form"><p>${t('Rate how you work with AI on each area, from 0 to 100. Your score uses these ratings and your latest assessment.')}</p><div class="bm-collaboration-ratings">${ratings}</div><div id="bm-collaboration-status" class="bm-collaboration-status" role="status" aria-live="polite">${t('Changes save automatically.')}</div></form></section>`;
+    return `<section class="bm-panel bm-collaboration-panel"><div class="bm-collaboration-heading"><div><span class="bm-eyebrow">${t('PROVISIONAL · NOT VALIDATED')}</span><h2>${t('AI Collaboration Score')}</h2><p>${t('A reflective snapshot of how you work with AI—not a measure of ability.')}</p></div><div class="bm-collaboration-score"><strong>${score}</strong><span>${t('provisional score')}</span></div></div><div class="bm-collaboration-components">${componentCards}</div><p class="bm-note">${autonomyNote} ${t('This is a design proposal, not a validated measure.')}</p>${challengeNote}${reviewNote}<form id="bm-collaboration-form" class="bm-collaboration-form"><p>${t('Rate how you work with AI on each area, from 0 to 100. Your score uses these ratings and your latest assessment.')}</p><div class="bm-collaboration-ratings">${ratings}</div><div id="bm-collaboration-status" class="bm-collaboration-status" role="status" aria-live="polite">${t('Changes save automatically.')}</div></form></section>`;
   }
   function wireCollaborationPanel(t){
     const form=root.querySelector('#bm-collaboration-form');
@@ -685,14 +1099,43 @@
       pedagogical:t('Subject learning practice'),
       balanced:t('Balanced practice'),
     }[recommendation.activity_type]||t('Balanced practice');
-    const recommendationReason=recommendation.activity_type==='balanced'
+    const interventionReview=recommendation.intervention_review;
+    const reviewOutcome=interventionReview?.status==='reviewed'
+      ?`${t('Follow-up after three sessions')}: ${t(interventionReview.outcome==='improved'?'Practice scores improved':interventionReview.outcome==='declined'?'Practice scores dipped':interventionReview.outcome==='engagement_improved'?'Engagement improved':interventionReview.outcome==='engagement_declined'?'Engagement declined':'No clear score change')} (${interventionReview.score_change>0?'+':''}${interventionReview.score_change} ${t('points')}).`
+      :'';
+    const adaptationMessage=recommendation.plateau?.intervention_required
+      ?esc(recommendation.plateau.message)
+      :'';
+    const learnerRequested=recommendation.decision_basis==='learner_requested_adaptation';
+    const requestedAdjustments=recommendation.coach_adjustments||{};
+    const requestedMessages=[];
+    if(requestedAdjustments.focus_topic){
+      requestedMessages.push(`${t('You asked to focus practice questions on')} ${esc(t(requestedAdjustments.focus_topic))}.`);
+    }
+    if(requestedAdjustments.activity_type==='cognitive'){
+      requestedMessages.push(`${t('You asked for more game-based practice; this path starts with')} ${t(recommendedStep?.title||'a game activity')}.`);
+    }else if(requestedAdjustments.activity_type==='pedagogical'){
+      requestedMessages.push(`${t('You asked for more subject practice; this path starts with')} ${t(recommendedStep?.title||'a practice activity')}.`);
+    }
+    const requestedFormatMessage=requestedMessages.join(' ')
+      ||(recommendation.activity_type==='cognitive'
+        ?`${t('You asked for more game-based practice; this path starts with')} ${t(recommendedStep?.title||'a game activity')}.`
+        :`${t('You asked for more subject practice; this path starts with')} ${t(recommendedStep?.title||'a practice activity')}.`);
+    const defaultRecommendationReason=recommendation.activity_type==='balanced'
       ?t('Complete this path to create an initial practice sample. Future recommendations compare cognitive-game and subject-learning results.')
       :`${t('Based on recent completed-path practice averages')}: ${t('Cognitive practice')} ${recommendation.cognitive_score}% (${recommendation.cognitive_attempts} ${t('attempts')}) · ${t('Subject learning practice')} ${recommendation.pedagogical_score}% (${recommendation.pedagogical_attempts} ${t('attempts')}). ${t('This guides practice only; it is not a measure of ability.')}`;
-    const recommendationPanel=`<section class="bm-panel bm-adaptive-recommendation"><span class="bm-recommendation-icon">${pathIcon(recommendation.activity_type==='cognitive'?'brain':recommendation.activity_type==='pedagogical'?'book':'spark')}</span><div class="bm-recommendation-copy"><span class="bm-eyebrow">${t('ADAPTIVE RECOMMENDATION')}</span><h2>${recommendationTitle}${recommendedStep?` · ${t(recommendedStep.title)}`:''}</h2><p>${recommendationReason}</p></div><span class="bm-recommendation-tag">${t(recommendation.activity_type==='balanced'?'Getting started':'Based on your practice')}</span></section>`;
+    const recommendationReason=[reviewOutcome,adaptationMessage].filter(Boolean).join(' ')
+      ||(learnerRequested?requestedFormatMessage:defaultRecommendationReason);
+    const recommendationPanel=`<section class="bm-panel bm-adaptive-recommendation"><span class="bm-recommendation-icon">${pathIcon(recommendation.activity_type==='cognitive'?'brain':recommendation.activity_type==='pedagogical'?'book':'spark')}</span><div class="bm-recommendation-copy"><span class="bm-eyebrow">${t('ADAPTIVE RECOMMENDATION')}</span><h2>${recommendationTitle}${recommendedStep?` · ${t(recommendedStep.title)}`:''}</h2><p>${recommendationReason}</p></div><span class="bm-recommendation-tag">${t(learnerRequested?'Your requested adjustment':recommendation.plateau?.intervention_required?'Adaptive adjustment':recommendation.activity_type==='balanced'?'Getting started':'Based on your practice')}</span></section>`;
     const baselinePanel=pathBaselinePanel(path.baseline,t);
     const exercisePanel=hebaExercisePanel(path.heba_exercise,result,t);
-    const questMap=`<section class="bm-panel bm-quest-map"><div class="bm-quest-map-heading"><div><span class="bm-eyebrow">${esc(subjectName)} · ${t('NUMBERED PRACTICE PLAN')}</span><h2>${path.complete?t('All challenges complete!'):t('Your activities, in order')}</h2><p>${t('Your ten activities combine subject practice with five cognitive games that use concepts from your selected domain.')}</p><p class="bm-quest-map-summary">${path.steps.length} ${t('activities total')} · ${path.cognitive_catalog.length} ${t('cognitive game exercises')} · ${t(path.pass_score+'% required to pass each activity')}</p></div><div class="bm-quest-total"><strong>${path.steps.filter(step=>step.passed).length}<small> / ${path.steps.length}</small></strong><span>${t('passed')}</span></div></div><nav class="bm-quest-route" style="--quest-progress:${routeProgress}%" aria-label="${esc(subjectName)} numbered practice activities">${map}</nav></section>`;
-    root.innerHTML=head('LEARNING PATH',`${esc(subjectName)} learning path`,t('Complete each numbered activity in order. Your subject exercises and cognitive games share one progress path.'),button('/assessment/','New challenge'))+baselinePanel+questMap+`<section class="bm-panel bm-quest-work">${panel}</section>`+collaborationPanel(path.collaboration,t)+recommendationPanel+exercisePanel+`<p class="bm-note bm-evidence-note">${t('These short activities are practice games, not a validated cognitive or ability measure. Scores show only how you did on this set.')}</p>`;
+    const questMap=`<section class="bm-panel bm-quest-map"><div class="bm-quest-map-heading"><div><span class="bm-eyebrow">${esc(subjectName)} · ${t('NUMBERED PRACTICE PLAN')}</span><h2>${path.complete?t('All challenges complete!'):t('Your activities, in order')}</h2><p>${t('Your ten activities combine subject practice with five cognitive games that use concepts from your selected domain.')}</p><p class="bm-quest-map-summary">${path.steps.length} ${t('activities total')} · ${path.cognitive_catalog.length} ${t('cognitive game exercises')} · ${t(path.pass_score+'% required to pass each activity')}</p><button id="bm-path-restart" class="bm-btn secondary" type="button">${t('Restart path with fresh questions')}</button></div><div class="bm-quest-total"><strong>${path.steps.filter(step=>step.passed).length}<small> / ${path.steps.length}</small></strong><span>${t('passed')}</span></div></div><nav class="bm-quest-route" style="--quest-progress:${routeProgress}%" aria-label="${esc(subjectName)} numbered practice activities">${map}</nav></section>`;
+    const dimensionPanel=dimensionRadarPanel(path,t);
+    root.innerHTML=head('LEARNING PATH',`${esc(subjectName)} learning path`,t('Complete each numbered activity in order. Your subject exercises and cognitive games share one progress path.'),button('/assessment/','New challenge'))+baselinePanel+dimensionPanel+questMap+`<section class="bm-panel bm-quest-work">${panel}</section>`+collaborationPanel(path.collaboration,t)+recommendationPanel+exercisePanel+`<p class="bm-note bm-evidence-note">${t('These short activities are practice games, not a validated cognitive or ability measure. Scores show only how you did on this set.')}</p>`;
+    root.querySelector('#bm-path-restart').onclick=()=>{
+      if(!window.confirm(t('Restart all ten activities? Current scores and progress will be saved in history.')))return;
+      task(async()=>renderLearningPath(await api('path',{action:'restart'})));
+    };
     wireCollaborationPanel(t);
     if(path.heba_exercise&&!path.heba_exercise.completed)wireHebaExercise(path);
     if(path.complete||path.challenge?.content_exhausted){
@@ -719,6 +1162,8 @@
       };
       if(result.result.passed)speak(result.coach||t('Challenge passed!'),'growth-three','🧠 Brain’s feedback',[],'brain');
       else speak(t(support[state.preferences?.language||'en']),'neutral','💗 Pinky is here',[],'pinky');
+    }else if(recommendation.plateau?.intervention_required){
+      speak(recommendation.plateau.message,'neutral','💗 Pinky suggests a fresh approach',[],'pinky');
     }else if(!result){
       const meta=activityMeta[path.active_step];
       speak(`${t(meta.title)}. ${t(meta.guidance)}`,'neutral','🧠 Brain’s tip',['Explain this step']);
@@ -1049,7 +1494,7 @@
     root.innerHTML=head('BRAIN TWIN','Your progress, in context.',t('A data-informed overview of your learning progress—not a diagnosis or fixed measure of ability.'),button('/settings/','Manage data',true))+twinMemoryHero(a)+
       `<div class="bm-grid four bm-twin-kpis"><section class="bm-panel"><span class="bm-note">LATEST PRACTICE SCORE</span><div class="bm-kpi">${a.score}<small>/100</small></div><p>${esc(a.date)} · ${esc(a.subject_name)}</p></section><section class="bm-panel"><span class="bm-note">RECORDED SESSIONS</span><div class="bm-kpi">${state.history_count??allHistory.length}</div><p>Across ${days||1} calendar day${days===1?'':'s'} in the visible history.</p></section><section class="bm-panel"><span class="bm-note">CHANGE IN SUBJECT TREND</span><div class="bm-kpi">${change===null?'—':`${change>=0?'+':''}${change}`}</div><p>${change===null?'At least two sessions in this subject are needed to compare.':`First to latest of the last ${subjectHistory.length} sessions in this subject. Repeated questions may contribute.`}</p></section><section class="bm-panel"><span class="bm-note">NEXT PRACTICE PROJECTION</span><div class="bm-kpi">${state.forecast?`${state.forecast.score}<small>/100</small>`:'—'}</div><p>${state.forecast?`Indicative range ${state.forecast.low}–${state.forecast.high}; ${state.forecast.confidence.replace('_',' ')} confidence based on ${state.forecast.sessions} session${state.forecast.sessions===1?'':'s'}. This is uncertain, not a promise.`:'Complete an assessment to establish a provisional projection.'}</p></section></div>
       <div class="bm-grid bm-twin-main"><section class="bm-panel"><div class="bm-section-heading"><div><span class="bm-eyebrow">HISTORY</span><h2>Score over time · ${esc(a.subject_name)}</h2><p>Independent score by completed session. The chart shows the latest 30 sessions in this subject.</p></div></div>${subjectHistory.length>1?trendChart(subjectHistory):'<p>One completed session in this subject is the starting point; more observations are needed for a trend.</p>'}<p class="bm-chart-caption">A short practice sample; repeated questions may affect score changes. Time is not penalized.</p></section>
-      <section class="bm-panel"><span class="bm-eyebrow">LATEST SNAPSHOT</span><h2 style="margin-top:8px">${esc(a.level)}</h2><p>Strongest observed section: <strong>${esc(strongest[0])}</strong> (${strongest[1]}%).</p><p>Suggested next focus: <strong>${esc(weakest[0])}</strong> (${weakest[1]}%).</p>${topicBars(a)}<h3 class="bm-chart-subtitle">Skill radar</h3><p class="bm-radar-caption">Each label shows a topic and its latest score out of 100. A larger area means a higher practice score.</p>${skillRadar(a.topics)}${button('/learning-path/','Open learning path',true)}</section></div>
+      <section class="bm-panel"><span class="bm-eyebrow">LATEST SNAPSHOT</span><h2 style="margin-top:8px">${esc(a.level)}</h2><p>Strongest observed section: <strong>${esc(strongest[0])}</strong> (${strongest[1]}%).</p><p>Suggested next focus: <strong>${esc(weakest[0])}</strong> (${weakest[1]}%).</p>${topicBars(a)}<h3 class="bm-chart-subtitle">Skill radar</h3><p class="bm-radar-caption">Each axis shows one topic and its latest score out of 100. Compare the labels individually; polygon area is not a total score.</p>${skillRadar(a.topics)}${button('/learning-path/','Open learning path',true)}</section></div>
       <section class="bm-panel bm-history-panel"><div class="bm-section-heading"><div><span class="bm-eyebrow">PRACTICE RHYTHM</span><h2>12-week activity heatmap</h2><p>Completed assessment sessions by day. A quiet day is not a setback.</p></div></div>${activityHeatmap(state.activity)}</section>
       <section class="bm-panel bm-history-panel"><div class="bm-section-heading"><div><span class="bm-eyebrow">GOAL TRACKING</span><h2>Choose a steady target</h2><p>Track a score aim and a weekly practice rhythm. These guide practice; they do not predict outcomes.</p></div></div><div class="bm-grid"><form id="bm-goal-form" class="bm-goal-form"><div class="bm-field"><label for="bm-goal-score">Target practice score</label><input id="bm-goal-score" name="target_score" type="number" min="50" max="100" step="1" value="${goal.target_score||80}" required></div><div class="bm-field"><label for="bm-goal-weekly">Practice sessions per week</label><select id="bm-goal-weekly" name="weekly_sessions">${[1,2,3,4,5,6,7].map(count=>`<option value="${count}" ${weeklyTarget===count?'selected':''}>${count} per week</option>`).join('')}</select></div><div class="bm-field"><label for="bm-goal-date">Target date (optional)</label><input id="bm-goal-date" name="target_date" type="date" value="${esc(goal.target_date||'')}"></div><div id="bm-goal-error" class="bm-error" role="alert"></div><button class="bm-btn" type="submit">Save my goals</button></form><div class="bm-goal-progress"><span class="bm-note">LATEST SCORE TOWARD TARGET</span><div class="bm-kpi">${goal.target_score?`${state.goal_progress||0}<small>%</small>`:'—'}</div><div class="bm-progress"><span style="width:${goal.target_score?state.goal_progress||0:0}%"></span></div><p>${goal.target_score?`${a.score}/100 latest score toward ${goal.target_score}/100. This progress reflects the latest practice only.`:'Set a target score to begin tracking.'}</p><span class="bm-note">THIS WEEK'S PRACTICE</span><div class="bm-kpi">${weeklyCount}<small>/${weeklyTarget}</small></div><div class="bm-progress"><span style="width:${Math.min(100,weeklyCount*100/weeklyTarget)}%"></span></div><p>${weeklyCount>=weeklyTarget?'Weekly practice target reached.':`${weeklyTarget-weeklyCount} more session${weeklyTarget-weeklyCount===1?'':'s'} to your weekly target.`}</p></div></div></section>
       ${history.length?`<section class="bm-panel bm-history-panel"><div class="bm-section-heading"><div><span class="bm-eyebrow">SESSION LOG</span><h2>Practice history</h2><p>Use this timeline to understand what changed between sessions.</p></div></div><div class="bm-history-table-wrap"><table class="bm-history-table"><thead><tr><th>Date</th><th>Subject</th><th>Score</th><th>Accuracy</th><th>Change</th></tr></thead><tbody>${history.map((item,index)=>{const previous=history[index-1],delta=previous?item.score-previous.score:null;return `<tr><td>${esc(item.date)}</td><td>${esc(item.subject_name)}</td><td><strong>${item.score}/100</strong></td><td>${item.accuracy}%</td><td>${delta===null?'<span class="bm-note">Baseline</span>':`<span class="${delta>0?'bm-positive':delta<0?'bm-negative':'bm-note'}">${delta>0?'+':''}${delta} pts</span>`}</td></tr>`;}).join('')}</tbody></table></div></section>`:''}
@@ -1057,11 +1502,67 @@
     root.querySelector('#bm-goal-form').onsubmit=event=>{event.preventDefault();const form=event.currentTarget;task(async()=>{try{const result=await api('goal',{target_score:Number(form.elements.namedItem('target_score').value),weekly_sessions:Number(form.elements.namedItem('weekly_sessions').value),target_date:form.elements.namedItem('target_date').value});state.goal=result.goal;state=await api('state');twin();}catch(e){root.querySelector('#bm-goal-error').textContent=e.message;}});};
     loadTwinMemory();
     speak(state.forecast?'Your practice history is ready. The dashboard includes an adaptive plan, activity rhythm, and uncertain projections.':history.length>1?'Your practice history is ready. Complete another session to see a cautious projection.':'One session gives a baseline and a very uncertain provisional projection.','growth-three','👀 Listening');}
-  function settings(){mode('learning');const p=state.preferences||{};  root.innerHTML=head('SETTINGS','Your space, your choices.','Control coaching, history memory, voice, and the data kept with your account.')+`<div class="bm-grid"><section class="bm-panel"><h2>Brain preferences</h2><div class="bm-field"><label for="pref-language">Interface language</label><select id="pref-language" name="language"><option value="en" ${!p.language||p.language==='en'?'selected':''}>English</option><option value="fr" ${p.language==='fr'?'selected':''}>Français</option><option value="ar" ${p.language==='ar'?'selected':''}>العربية</option></select></div><div class="bm-toggle"><div><strong>AI coaching</strong><small>Off by default. When on, your messages and conversation context, goal, latest assessment score, and learning-challenge score and time may be sent to OpenRouter for feedback. Recent assessment scores are shared only when history sharing is enabled; retrieved Chroma history is included only when local memory is on.</small></div><input id="pref-ai" type="checkbox" ${p.ai?'checked':''} ${state.ai_ready?'':'disabled'} aria-label="Enable AI coaching"></div>${state.ai_ready?'':'<p class="bm-note">AI service is not configured; local guidance remains available.</p>'}<div class="bm-toggle"><div><strong>Personal history memory · local Chroma</strong><small>Off by default. When enabled, completed assessment summaries and learning-path topics, scores, attempts, times, and coaching feedback are indexed locally for your account only. Profile details and answer keys are not stored in RAG memory. This stays on your device and is not sent to AI unless AI coaching is separately enabled. Turning memory off deletes these local RAG records; your account history remains.</small></div><input id="pref-memory" type="checkbox" ${p.memory?'checked':''} aria-label="Enable local history memory"></div><div class="bm-toggle"><div><strong>Voice feedback</strong><small>Speak the same message shown on screen. Browser voice; no audio is stored.</small></div><input id="pref-voice" type="checkbox" ${p.voice?'checked':''}></div><div class="bm-toggle"><div><strong>Share progress history with AI coach</strong><small>Your dated session history and trends always appear in Brain Twin. This separate setting controls whether recent scores may be shared with the AI coach when AI coaching is enabled.</small></div><input id="pref-growth" type="checkbox" ${p.growth?'checked':''}></div><div class="bm-toggle"><div><strong>Mood check-in</strong><small>Optional self-report only. Brain adapts to what you select and does not infer emotions from answers or chat.</small></div><input id="pref-mood" type="checkbox" ${p.mood?'checked':''}></div><div id="bm-error" class="bm-error" role="alert"></div><button id="save-prefs" class="bm-btn">Save preferences</button></section><section class="bm-panel"><h2>Account & data</h2><p>Update your personal details or export your complete learning history.</p><p>${button('/accounts/profile/','Edit account',true)}</p><button id="export" class="bm-btn secondary">Download my data ↓</button><p class="bm-note">Export includes your profile, goals, preferences, completed assessments, and learning-path averages, scores, times, attempts, and coaching feedback.</p><button id="delete" class="bm-btn secondary" style="margin-top:10px">Delete learning data</button><p class="bm-note">This also removes local Chroma memory while keeping your account.</p></section></div>`;
+  function settings(){mode('learning');const p=state.preferences||{};  root.innerHTML=head('SETTINGS','Your space, your choices.','Control coaching, history memory, voice, and the data kept with your account.')+`<div class="bm-grid"><section class="bm-panel"><h2>Brain preferences</h2><div class="bm-field"><label for="pref-language">Interface language</label><select id="pref-language" name="language"><option value="en" ${!p.language||p.language==='en'?'selected':''}>English</option><option value="fr" ${p.language==='fr'?'selected':''}>Français</option><option value="ar" ${p.language==='ar'?'selected':''}>العربية</option></select></div><div class="bm-toggle"><div><strong>AI coaching</strong><small>Off by default. When on, your messages and conversation context, goal, latest assessment score, and learning-challenge score and time may be sent to Groq (preferred when configured) or OpenRouter for feedback. When you ask why a path activity was assigned, its saved selection record is also included. Dated score and response-time trends are shared only when history sharing is enabled; retrieved Chroma history is included only when local memory is on.</small></div><input id="pref-ai" type="checkbox" ${p.ai?'checked':''} ${state.ai_ready?'':'disabled'} aria-label="Enable AI coaching"></div>${state.ai_ready?'':'<p class="bm-note">AI service is not configured; local guidance remains available.</p>'}<div class="bm-toggle"><div><strong>Personal history memory · local Chroma</strong><small>Off by default. When enabled, completed assessment summaries and learning-path topics, scores, attempts, times, and coaching feedback are indexed locally for your account only. Profile details and answer keys are not stored in RAG memory. This stays on your device and is not sent to AI unless AI coaching is separately enabled. Turning memory off deletes these local RAG records; your account history remains.</small></div><input id="pref-memory" type="checkbox" ${p.memory?'checked':''} aria-label="Enable local history memory"></div><div class="bm-toggle"><div><strong>Voice feedback</strong><small>Speak the same message shown on screen. Browser voice; no audio is stored.</small></div><input id="pref-voice" type="checkbox" ${p.voice?'checked':''}></div><div class="bm-toggle"><div><strong>Share progress history with AI coach</strong><small>Your dated session history and trends always appear in Brain Twin. This separate setting controls whether recent scores may be shared with the AI coach when AI coaching is enabled.</small></div><input id="pref-growth" type="checkbox" ${p.growth?'checked':''}></div><div class="bm-toggle"><div><strong>Mood check-in</strong><small>Optional self-report only. Brain adapts to what you select and does not infer emotions from answers or chat.</small></div><input id="pref-mood" type="checkbox" ${p.mood?'checked':''} aria-label="Enable optional mood check-in"></div><div id="bm-error" class="bm-error" role="alert"></div><button id="save-prefs" class="bm-btn">Save preferences</button></section><section class="bm-panel"><h2>Account & data</h2><p>Update your personal details or export your complete learning history.</p><p>${button('/accounts/profile/','Edit account',true)}</p><button id="export" class="bm-btn secondary">Download my data ↓</button><p class="bm-note">Export includes your profile, goals, preferences, completed assessments, and learning-path results.</p><button id="delete" class="bm-btn secondary" style="margin-top:10px">Delete learning data</button><p class="bm-note">This also removes local Chroma memory while keeping your account.</p></section></div>`;
     root.querySelector('#pref-memory').previousElementSibling.querySelector('small').textContent=window.BrainMaxI18n.translate('Off by default. When enabled, your name, learning subject, role, motivation, experience level, study-time preference, goals, assessment summaries, and learning-path results are indexed locally for your account. Passwords, email addresses, and raw answer keys are not stored. This stays on your device and is not sent to AI unless AI coaching is separately enabled. Turning memory off deletes these local RAG records; your account history remains.');
     root.querySelector('#save-prefs').onclick=()=>task(async()=>{const prefs={ai:root.querySelector('#pref-ai').checked,memory:root.querySelector('#pref-memory').checked,voice:root.querySelector('#pref-voice').checked,growth:root.querySelector('#pref-growth').checked,mood:root.querySelector('#pref-mood').checked,language:root.querySelector('#pref-language').value};const result=await api('preferences',prefs);state.preferences=result.preferences;window.BrainMaxI18n.apply(prefs.language);window.location.reload();});
     root.querySelector('#export').onclick=()=>{window.location.href='/api/export/';};
     root.querySelector('#delete').onclick=()=>{if(confirm('Delete your learning profile, assessment history, and local Chroma memory? Your account remains.'))task(async()=>{await api('reset',{});state=await api('state');settings();speak('Learning data deleted. Your account remains available.','neutral','✅ Done');});};speak('You control what Brain uses. AI coaching, local memory, voice, and sharing history with AI are optional.','neutral','👀 Listening');}
 
-  api('state').then(data=>{state=data;window.BrainMaxI18n.apply(state.preferences?.language||'en');voiceOn=Boolean(state.preferences?.voice);document.getElementById('boltVoice').textContent=voiceOn?'🔊':'🔇';document.getElementById('boltMoodWrap').hidden=!state.preferences?.mood;document.getElementById('boltAiHint').hidden=!state.ai_ready||Boolean(state.preferences?.ai);render();}).catch(e=>{root.innerHTML='<div class="bm-panel"><h2>Unable to load your workspace</h2><p>Please refresh the page.</p></div>';speak(e.message,'confused','❌ Error');});
+  function fallbackWorkspace(message='Your learning space is loading…') {
+    const fallback = `
+      <div class="bm-panel" style="padding:24px 28px;">
+        <h2 style="margin:0 0 8px;">${esc(message)}</h2>
+        <p style="margin:0;">Check your connection and refresh, or return to your profile to start again.</p>
+      </div>
+    `;
+    if (root) root.innerHTML = fallback;
+  }
+
+  api('state').then(async data=>{
+    try {
+      state=data;
+      if (window.BrainMaxI18n) {
+        window.BrainMaxI18n.apply(state.preferences?.language||'en');
+      }
+      voiceOn=Boolean(state.preferences?.voice);
+      const voiceBtn=document.getElementById('boltVoice');
+      if (voiceBtn) voiceBtn.textContent=voiceOn?'🔊':'🔇';
+      const moodWrap=document.getElementById('boltMoodWrap');
+      if (moodWrap) moodWrap.hidden=!state.preferences?.mood;
+      const aiHint=document.getElementById('boltAiHint');
+      if (aiHint) aiHint.hidden=!state.ai_ready||Boolean(state.preferences?.ai);
+      const url=new URL(window.location.href);
+      let assessmentStartError = '';
+      if(page==='assessment'&&url.searchParams.get('start')==='1'){
+        url.searchParams.delete('start');
+        window.history.replaceState(null,'',url.pathname+url.search+url.hash);
+        if(state.profile?.subject&&(!state.assessment||state.assessment.completed)){
+          try {
+            state.assessment=await api('assessment',{});
+          } catch (error) {
+            assessmentStartError = error.message;
+            console.error('Assessment start failed', error);
+          }
+        }
+      }
+      render();
+      if (assessmentStartError) {
+        const notice = document.createElement('div');
+        notice.className = 'bm-panel bm-error';
+        notice.setAttribute('role', 'alert');
+        notice.textContent = `Unable to start the assessment: ${assessmentStartError}`;
+        root.prepend(notice);
+      }
+    } catch (error) {
+      console.error('Workspace render failed', error);
+      fallbackWorkspace('Unable to load your workspace');
+      speak('Your workspace needs a quick refresh.', 'confused', '❌ Error');
+    }
+  }).catch(e=>{
+    console.error('Workspace state failed', e);
+    fallbackWorkspace('Unable to load your workspace');
+    if (window.BrainMaxI18n) {
+      speak(e?.message || 'Please refresh the page.', 'confused', '❌ Error');
+    }
+  });
 })();

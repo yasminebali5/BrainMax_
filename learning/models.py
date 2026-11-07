@@ -16,8 +16,10 @@ class Assessment(models.Model):
     started_at = models.DateTimeField(auto_now_add=True)
     question_started_at = models.DateTimeField(null=True)
     answers = models.JSONField(default=list)
+    engagement = models.JSONField(default=dict)
     hint_used = models.BooleanField(default=False)
     completed_at = models.DateTimeField(null=True)
+    abandoned_at = models.DateTimeField(null=True)
 
 
 class LearningPathRun(models.Model):

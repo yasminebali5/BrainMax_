@@ -5,7 +5,7 @@
 <div id="bolt" class="bolt-dock" data-mode="learning" data-speaker="brain" aria-label="Brain and Pinky learning companions">
   <div class="bolt-portrait">
     <div class="bolt-mascots">
-      <button id="brainAvatar" class="bolt-avatar brain-avatar" type="button" aria-label="Ask Brain for a plan" title="Brain · learning plan"><span id="boltSprite" class="bolt-sprite" data-pose="neutral" role="img" aria-label="Brain, the strategy robot"></span><span class="mascot-name">BRAIN</span></button>
+      <button id="brainAvatar" class="bolt-avatar brain-avatar" type="button" aria-label="Tell Brain what to do" title="Brain · learning plan"><span id="boltSprite" class="bolt-sprite" data-pose="neutral" role="img" aria-label="Brain, the strategy robot"></span><span class="mascot-name">BRAIN</span></button>
       <button id="pinkyAvatar" class="bolt-avatar pinky-avatar" type="button" aria-label="Ask Pinky for support" title="Pinky · calm and motivation"><span id="pinkySprite" class="pinky-sprite" data-pose="listening" role="img" aria-label="Pinky, the supportive robot"></span><span class="mascot-name">PINKY</span></button>
     </div>
     <span id="boltBadge" class="bolt-badge">Here to help</span>
@@ -20,8 +20,8 @@
       <small>Your selection tailors this session only; neither robot infers or saves your mood.</small>
     </div>
     <div id="boltChat" class="bolt-chat" hidden>
-      <label for="boltInput">Ask Brain for a plan or Pinky for support</label>
-      <div class="bolt-chat-toolbar"><small>Conversation history stays in this browser session.</small><button id="boltClear" type="button">Clear conversation</button></div>
+      <label for="boltInput">Tell Brain what to do or ask Pinky for support</label>
+      <div class="bolt-chat-toolbar"><small>Brain can navigate, adjust learning plans, update goals/settings, and pause or resume sessions. You confirm changes; answers stay yours.</small><button id="boltClear" type="button">Clear conversation</button><small>Conversation history stays in this browser session.</small></div>
       <div id="boltTranscript" class="bolt-transcript" role="log" aria-live="polite" aria-relevant="additions text"></div>
       <p id="boltAiHint" class="bolt-ai-hint" hidden>Brain is using local replies. <a href="/settings/">Enable AI coaching in Settings</a> when an AI provider is configured.</p>
       <form id="boltChatForm" class="bolt-chat-row"><input id="boltInput" maxlength="500" autocomplete="off" placeholder="Ask about your next step"><button id="boltSend" type="submit">Send</button></form>
@@ -31,4 +31,4 @@
 </div>
 {% csrf_token %}
 {% endblock %}
-{% block scripts %}<script src="{% static 'js/locales.js' %}?v=20261031-12"></script><script src="{% static 'js/workspace.js' %}?v=20261031-16"></script>{% endblock %}
+{% block scripts %}<script src="{% static 'js/locales.js' %}?v=20261106-4"></script><script src="{% static 'js/workspace.js' %}?v=20261106-4"></script>{% endblock %}

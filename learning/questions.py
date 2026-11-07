@@ -1,11 +1,875 @@
 """Reviewed prototype items. Difficulty is provisional, not calibrated."""
 import hashlib
 import itertools
+import math
 import random
+from statistics import mean, median, pstdev, variance
+
+
+PLATEAU_WINDOW = 5
+PLATEAU_MIN_RELIABLE_ITEMS = 30
+PLATEAU_MIN_DIFFICULTY_LEVELS = 2
+PLATEAU_MIN_UNIQUE_ITEM_RATIO = 0.5
+PLATEAU_SLOPE_EQUIVALENCE_BAND = 3.0
+PLATEAU_MAX_SCORE_VARIANCE = 100.0
+PLATEAU_COOLDOWN_SESSIONS = 3
+PLATEAU_DIFFICULTY_LEVELS = {
+    'Foundation': 1,
+    'Building': 2,
+    'Stretch': 3,
+}
+
+T_95_CRITICAL_VALUES = {
+    3: 3.182,
+    4: 2.776,
+    5: 2.571,
+    6: 2.447,
+    7: 2.365,
+    8: 2.306,
+    9: 2.262,
+    10: 2.228,
+}
+T_90_CRITICAL_VALUES = {
+    3: 2.353,
+    4: 2.132,
+    5: 2.015,
+    6: 1.943,
+    7: 1.895,
+    8: 1.860,
+    9: 1.833,
+    10: 1.812,
+}
 
 def q(topic, prompt, choices, correct, explanation, hint, difficulty='Foundation'):
     question_id = hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16]
     return dict(id=question_id, topic=topic, prompt=prompt, choices=choices, correct=correct, explanation=explanation, hint=hint, difficulty=difficulty)
+
+
+def _session_observation(assessment):
+    items = assessment.questions or BANK[assessment.subject][:6]
+    answers = assessment.answers
+    reliable = [
+        (index, answer)
+        for index, answer in enumerate(answers)
+        if answer.get('validity', 'reliable') == 'reliable'
+    ]
+    if not reliable:
+        return None
+
+    scores = [
+        int(answer['correct'] and not answer.get('hint', False))
+        for _, answer in reliable
+    ]
+    answer_topics = {}
+    response_times = []
+    reading_ratios = []
+    active_times = []
+    hinted = 0
+    skipped = 0
+    repeated_questions = []
+    difficulty_counts = {}
+    for index, answer in reliable:
+        hinted += int(bool(answer.get('hint')))
+        topic = answer.get('topic')
+        if topic:
+            answer_topics.setdefault(topic, []).append(
+                int(answer['correct'] and not answer.get('hint', False))
+            )
+        if type(answer.get('seconds')) in (int, float) and answer['seconds'] > 0:
+            response_times.append(float(answer['seconds']))
+
+        question = items[index] if index < len(items) else None
+        if question:
+            repeated_questions.append(question.get('id'))
+            level = PLATEAU_DIFFICULTY_LEVELS.get(
+                question.get('difficulty', 'Foundation')
+            )
+            if level is not None:
+                difficulty_counts[level] = difficulty_counts.get(level, 0) + 1
+            words = question.get('prompt', '').split()
+            reading_floor = len(words) / 4 + 0.5
+            if type(answer.get('seconds')) in (int, float) and reading_floor:
+                reading_ratios.append(answer['seconds'] / reading_floor)
+            telemetry = answer.get('telemetry', {})
+            if isinstance(telemetry, dict):
+                active_ms = telemetry.get('active_ms')
+                if type(active_ms) is int and active_ms > 0:
+                    active_times.append(active_ms)
+                    if (
+                        active_ms < reading_floor * 1000
+                        and not telemetry.get('stimulus_seen', False)
+                    ):
+                        skipped += 1
+
+    question_difficulties = set(difficulty_counts)
+    engagement = assessment.engagement or {}
+    engagement_audit = (
+        engagement.get('audit', [])
+        if isinstance(engagement, dict) else []
+    )
+    if not isinstance(engagement_audit, list):
+        engagement_audit = []
+    rapid_flags = {
+        flag
+        for audit in engagement_audit
+        if isinstance(audit, dict)
+        for flag in audit.get('flags', [])
+        if isinstance(audit.get('flags'), list)
+    }
+    return {
+        'assessment_id': assessment.pk,
+        'completed_at': assessment.completed_at,
+        'score': 100 * mean(scores),
+        'reliable_count': len(reliable),
+        'difficulty_levels': question_difficulties,
+        'difficulty_counts': difficulty_counts,
+        'topics': answer_topics,
+        'response_seconds': mean(response_times) if response_times else None,
+        'reading_ratio': mean(reading_ratios) if reading_ratios else None,
+        'active_ms': active_times,
+        'hint_rate': hinted / len(reliable),
+        'skip_rate': skipped / len(reliable),
+        'rapid_flags': rapid_flags,
+        'unique_question_count': len(set(repeated_questions)),
+        'question_ids': repeated_questions,
+    }
+
+
+def _linear_slope(values):
+    count = len(values)
+    x_values = list(range(count))
+    x_mean = mean(x_values)
+    y_mean = mean(values)
+    sum_x_squared = sum((x - x_mean) ** 2 for x in x_values)
+    slope = sum(
+        (x - x_mean) * (y - y_mean)
+        for x, y in zip(x_values, values)
+    ) / sum_x_squared
+    return slope
+
+
+def _linear_slope_and_ci(values):
+    count = len(values)
+    x_values = list(range(count))
+    x_mean = mean(x_values)
+    y_mean = mean(values)
+    sum_x_squared = sum((x - x_mean) ** 2 for x in x_values)
+    slope = _linear_slope(values)
+    intercept = y_mean - slope * x_mean
+    residual_sum_squares = sum(
+        (y - (intercept + slope * x)) ** 2
+        for x, y in zip(x_values, values)
+    )
+    degrees_freedom = count - 2
+    standard_error = math.sqrt(
+        residual_sum_squares / degrees_freedom / sum_x_squared
+    )
+    critical_value = T_95_CRITICAL_VALUES.get(degrees_freedom, 1.96)
+    margin = critical_value * standard_error
+    interval_95 = (slope - margin, slope + margin)
+    interval_90_margin = (
+        T_90_CRITICAL_VALUES.get(degrees_freedom, 1.645) * standard_error
+    )
+    interval_90 = (
+        slope - interval_90_margin,
+        slope + interval_90_margin,
+    )
+    return slope, interval_95, interval_90
+
+
+def _assessment_history(learner, subject, through=None, limit=12):
+    from .models import Assessment
+
+    assessments = Assessment.objects.filter(
+        learner=learner,
+        subject=subject,
+        completed_at__isnull=False,
+        abandoned_at__isnull=True,
+    )
+    if through is not None:
+        assessments = assessments.filter(
+            completed_at__lte=through.completed_at,
+        )
+    return [
+        observation
+        for assessment in assessments.order_by('-completed_at', '-id')[:limit]
+        if (observation := _session_observation(assessment)) is not None
+    ][::-1]
+
+
+def _intervention_review(learner, subject, sessions):
+    from .models import LearningPathRun
+
+    runs = LearningPathRun.objects.filter(
+        learner=learner,
+        assessment__subject=subject,
+    ).order_by('-assessment__completed_at', '-assessment_id')[:12]
+    session_indexes = {
+        item['assessment_id']: index
+        for index, item in enumerate(sessions)
+    }
+    for run in runs:
+        audit = (
+            run.steps[0].get('assignment_audit')
+            if run.steps else None
+        )
+        intervention = (
+            audit.get('plateau_intervention')
+            if isinstance(audit, dict) else None
+        )
+        if not isinstance(intervention, dict):
+            continue
+        intervention_index = session_indexes.get(run.assessment_id)
+        if intervention_index is None:
+            continue
+
+        after = sessions[intervention_index + 1:]
+        review = {
+            'assessment_id': run.assessment_id,
+            'diagnosis': intervention.get('diagnosis'),
+            'action': intervention.get('action'),
+            'escalation_level': intervention.get('escalation_level', 0),
+            'sessions_after_intervention': len(after),
+            'cooldown_remaining': max(
+                0,
+                PLATEAU_COOLDOWN_SESSIONS - len(after),
+            ),
+        }
+        if len(after) < PLATEAU_COOLDOWN_SESSIONS:
+            review['status'] = 'cooldown'
+            return review
+
+        follow_up = after[:PLATEAU_COOLDOWN_SESSIONS]
+        before = sessions[max(0, intervention_index - 2):intervention_index + 1]
+        before_scores = [item['score'] for item in before]
+        after_scores = [item['score'] for item in follow_up]
+        score_change = round(mean(after_scores) - mean(before_scores), 1)
+        review.update(
+            status='reviewed',
+            baseline_sessions=len(before_scores),
+            follow_up_sessions=len(after_scores),
+            scores_after=[round(score, 1) for score in after_scores],
+            score_change=score_change,
+            post_intervention_slope=round(_linear_slope(after_scores), 3),
+            response_time_change_percent=None,
+            active_time_change_percent=None,
+            hint_rate_change=None,
+            ability_estimate_change='not_available',
+        )
+        if score_change >= 5:
+            review['outcome'] = 'improved'
+        elif score_change <= -5:
+            review['outcome'] = 'declined'
+        else:
+            review['outcome'] = 'no_clear_score_change'
+
+        before_times = [
+            item['response_seconds']
+            for item in before
+            if item['response_seconds'] is not None
+        ]
+        after_times = [
+            item['response_seconds']
+            for item in follow_up
+            if item['response_seconds'] is not None
+        ]
+        if before_times and after_times and mean(before_times) > 0:
+            review['response_time_change_percent'] = round(
+                (mean(before_times) - mean(after_times))
+                * 100 / mean(before_times),
+                1,
+            )
+        before_active = [
+            active_ms
+            for item in before
+            for active_ms in item['active_ms']
+        ]
+        after_active = [
+            active_ms
+            for item in follow_up
+            for active_ms in item['active_ms']
+        ]
+        if before_active and after_active and mean(before_active) > 0:
+            review['active_time_change_percent'] = round(
+                (mean(after_active) - mean(before_active))
+                * 100 / mean(before_active),
+                1,
+            )
+        review['hint_rate_change'] = round(
+            mean(item['hint_rate'] for item in follow_up)
+            - mean(item['hint_rate'] for item in before),
+            3,
+        )
+        if (
+            review['outcome'] == 'no_clear_score_change'
+            and (
+                review['hint_rate_change'] <= -0.15
+                or (
+                    review['active_time_change_percent'] is not None
+                    and review['active_time_change_percent'] >= 15
+                )
+            )
+        ):
+            review['outcome'] = 'engagement_improved'
+        elif (
+            review['outcome'] == 'no_clear_score_change'
+            and review['hint_rate_change'] >= 0.15
+            and (
+                review['active_time_change_percent'] is None
+                or review['active_time_change_percent'] <= -15
+            )
+        ):
+            review['outcome'] = 'engagement_declined'
+        return review
+    return None
+
+
+def _escalation_for_review(review):
+    escalation_level = min(3, review['escalation_level'] + 1)
+    if escalation_level == 1:
+        return escalation_level, 'strategy_escalation', 'strategy_suggestion'
+    if escalation_level == 2:
+        return escalation_level, 'modality_escalation', 'alternate_modality'
+    return escalation_level, 'mentor_escalation', 'mentor_referral'
+
+
+def _plateau_message(language, diagnosis, metrics):
+    messages = {
+        'comfort_plateau': {
+            'en': 'Your practice has stayed steady with few hints. Let’s raise the challenge and mix in a different activity format.',
+            'fr': 'Vos résultats restent stables avec peu d’indices. Augmentons le défi et essayons un autre format d’activité.',
+            'ar': 'نتائجك مستقرة مع استخدام قليل للتلميحات. لنرفع مستوى التحدي ونجرب نشاطاً بصيغة مختلفة.',
+        },
+        'frustration_plateau': {
+            'en': 'This stretch looks demanding. Let’s step down one level and work through a guided example.',
+            'fr': 'Cette étape semble exigeante. Redescendons d’un niveau et suivons un exemple guidé.',
+            'ar': 'تبدو هذه المرحلة صعبة. لنخفّض المستوى خطوة ونتدرّب على مثال موجّه.',
+        },
+        'skill_gap_plateau': {
+            'en': 'Your practice is stronger in {strong_topic} than {weak_topic}. Let’s focus there while mixing in a topic you already know.',
+            'fr': 'Vos résultats sont meilleurs en {strong_topic} qu’en {weak_topic}. Concentrons-nous sur ce point en alternant avec un sujet maîtrisé.',
+            'ar': 'أداؤك في {strong_topic} أقوى منه في {weak_topic}. لنركّز عليه مع التناوب مع موضوع تتقنه.',
+        },
+        'disengaged_plateau': {
+            'en': 'Let’s keep the next game rounds shorter and reset the pace. We can switch back if it doesn’t help.',
+            'fr': 'Gardons les prochaines manches plus courtes et reprenons à votre rythme. Nous pourrons changer si cela ne vous aide pas.',
+            'ar': 'لنجعل الجولات القادمة أقصر ونواصل بوتيرتك. يمكننا تغيير الأسلوب إن لم يساعدك ذلك.',
+        },
+        'mastery_plateau': {
+            'en': 'You’re scoring strongly across the levels you’ve tried. Let’s move to a stretch activity and apply it to a new challenge.',
+            'fr': 'Vos résultats sont solides aux différents niveaux essayés. Passons à une activité avancée et appliquons vos acquis à un nouveau défi.',
+            'ar': 'نتائجك قوية عبر المستويات التي جرّبتها. لننتقل إلى نشاط متقدم ونطبّق ما تعلمته في تحدٍ جديد.',
+        },
+        'strategy_plateau': {
+            'en': 'Your results are steady, but they don’t point to one clear cause. Let’s try retrieval practice and alternate topics instead of repeating the same routine.',
+            'fr': 'Vos résultats sont stables sans cause clairement établie. Essayons le rappel actif et alternons les sujets au lieu de répéter la même routine.',
+            'ar': 'نتائجك مستقرة لكن السبب غير واضح. لنجرب الاسترجاع من الذاكرة والتناوب بين المواضيع بدلاً من تكرار الروتين نفسه.',
+        },
+        'under_challenged_feed': {
+            'en': 'Your scores are steady, but recent practice has not varied enough to call this a plateau. I’ll add a harder tier or a different activity format first.',
+            'fr': 'Vos résultats sont stables, mais les dernières séances n’utilisaient qu’un seul niveau. Essayons un niveau supérieur avant de parler de plateau.',
+            'ar': 'نتائجك مستقرة، لكن الجلسات الأخيرة استخدمت مستوى صعوبة واحداً فقط. سأضيف مستوى أصعب قبل اعتبار ذلك ثباتاً في التقدم.',
+        },
+        'repeated_item_feed': {
+            'en': 'We’ve repeated many of the same questions, so these results may not show your progress clearly. Let’s switch to fresh questions and a different practice strategy, keeping the challenge suited to your recent work.',
+            'fr': 'Nous avons répété beaucoup de questions, ce qui ne reflète peut-être pas clairement vos progrès. Essayons de nouvelles questions et une autre stratégie, avec un niveau adapté à votre travail récent.',
+            'ar': 'كررنا الكثير من الأسئلة نفسها، لذلك قد لا تعكس هذه النتائج تقدمك بوضوح. لنجرب أسئلة جديدة واستراتيجية مختلفة بمستوى يناسب عملك الأخير.',
+        },
+        'insufficient': {
+            'en': 'I don’t have enough varied practice yet to tell what is holding progress steady. Let’s collect a few more sessions at different levels.',
+            'fr': 'Je n’ai pas encore assez de pratique variée pour comprendre cette stabilité. Recueillons quelques séances supplémentaires à différents niveaux.',
+            'ar': 'لا تتوفر لديّ بعد ممارسة متنوعة كافية لمعرفة سبب استقرار النتائج. لنجمع بعض الجلسات الإضافية بمستويات مختلفة.',
+        },
+        'strategy_escalation': {
+            'en': 'The format change hasn’t shifted your recent results yet. Let’s try a new retrieval strategy and alternate the topics.',
+            'fr': 'Le changement de format n’a pas encore modifié vos résultats. Essayons une nouvelle stratégie de rappel et alternons les sujets.',
+            'ar': 'لم يغيّر تبديل الصيغة النتائج الأخيرة بعد. لنجرب استراتيجية استرجاع جديدة ونتناوب بين المواضيع.',
+        },
+        'modality_escalation': {
+            'en': 'Your results remained steady after the format and strategy changes. Let’s switch learning modality and use a different kind of practice.',
+            'fr': 'Vos résultats sont restés stables après les changements de format et de stratégie. Essayons une autre modalité de pratique.',
+            'ar': 'بقيت نتائجك مستقرة بعد تغيير الصيغة والاستراتيجية. لننتقل إلى طريقة تعلّم مختلفة.',
+        },
+        'mentor_escalation': {
+            'en': 'We’ve tried a few practice approaches and the pattern is still steady. A teacher or mentor could help choose a more personal next step.',
+            'fr': 'Nous avons essayé plusieurs approches et les résultats restent stables. Un enseignant ou mentor pourrait proposer une prochaine étape plus personnelle.',
+            'ar': 'جرّبنا عدة أساليب وما زالت النتائج مستقرة. قد يساعدك معلم أو مرشد في اختيار خطوة تناسبك أكثر.',
+        },
+    }
+    return messages.get(diagnosis, {}).get(
+        language,
+        messages.get(diagnosis, {}).get('en', messages['insufficient']['en']),
+    ).format(
+        strong_topic=metrics.get('strongest_topic', 'a stronger topic'),
+        weak_topic=metrics.get('weakest_topic', 'this topic'),
+    )
+
+
+def detect_assessment_plateau(learner, subject, through=None):
+    """Diagnose a stable five-session window using only recorded evidence."""
+    sessions = _assessment_history(learner, subject, through)
+    review = _intervention_review(learner, subject, sessions)
+    window = sessions[-PLATEAU_WINDOW:]
+    scores = [item['score'] for item in window]
+    result = {
+        'detected': False,
+        'intervention_required': False,
+        'status': 'insufficient_evidence',
+        'reason': 'minimum_sessions',
+        'sessions_available': len(window),
+        'minimum_sessions': PLATEAU_WINDOW,
+        'reliable_items': sum(item['reliable_count'] for item in window),
+        'minimum_reliable_items': PLATEAU_MIN_RELIABLE_ITEMS,
+        'difficulty_levels': sorted({
+            level
+            for item in window
+            for level in item['difficulty_levels']
+        }),
+        'minimum_difficulty_levels': PLATEAU_MIN_DIFFICULTY_LEVELS,
+        'ability_estimate': 'not_available',
+        'confidence_interval_method': (
+            '95% Student-t slope interval and 90% TOST equivalence interval'
+        ),
+    }
+    if review:
+        result['intervention_review'] = review
+        if review['status'] == 'cooldown':
+            result.update(
+                status='intervention_cooldown',
+                reason='wait_for_three_post_intervention_sessions',
+                cooldown_remaining=review['cooldown_remaining'],
+            )
+            return result
+    if len(window) < PLATEAU_WINDOW:
+        if scores:
+            result.update(
+                average_score=round(mean(scores), 1),
+                score_variance=round(variance(scores), 2) if len(scores) > 1 else 0,
+            )
+        return result
+
+    result['scores'] = [round(score, 1) for score in scores]
+    result['assessment_ids'] = [
+        item['assessment_id'] for item in window
+    ]
+    result['average_score'] = round(mean(scores), 1)
+    result['score_variance'] = round(variance(scores), 2)
+    slope, slope_interval, equivalence_interval = _linear_slope_and_ci(scores)
+    result['score_slope_per_session'] = round(slope, 3)
+    result['slope_95_ci'] = [round(value, 3) for value in slope_interval]
+    result['slope_ci_includes_zero'] = (
+        slope_interval[0] <= 0 <= slope_interval[1]
+    )
+    result['slope_equivalent'] = (
+        equivalence_interval[0] >= -PLATEAU_SLOPE_EQUIVALENCE_BAND
+        and equivalence_interval[1] <= PLATEAU_SLOPE_EQUIVALENCE_BAND
+        and abs(slope) <= PLATEAU_SLOPE_EQUIVALENCE_BAND
+    )
+    result['slope_equivalence_90_ci'] = [
+        round(value, 3) for value in equivalence_interval
+    ]
+    result['slope_equivalence_band'] = [
+        -PLATEAU_SLOPE_EQUIVALENCE_BAND,
+        PLATEAU_SLOPE_EQUIVALENCE_BAND,
+    ]
+    result['cusum_shift_detected'] = _page_hinkley_shift(sessions)
+    result['item_entropy'] = _item_entropy(window)
+    unique_item_ratio = result['item_entropy']['distinct_question_ratio']
+    result['unique_item_ratio'] = unique_item_ratio
+
+    if sum(item['reliable_count'] for item in window) < PLATEAU_MIN_RELIABLE_ITEMS:
+        result['reason'] = 'minimum_reliable_items'
+        return result
+    if slope_interval[0] > 0 or slope_interval[1] < 0:
+        if review:
+            result.update(
+                status='intervention_review',
+                reason='post_intervention_trend_detected',
+            )
+            return result
+        return None
+    if result['score_variance'] > PLATEAU_MAX_SCORE_VARIANCE:
+        result.update(
+            status='insufficient_evidence',
+            reason='noisy_flat_scores',
+            diagnosis='inconsistent',
+        )
+        return result
+    if (
+        equivalence_interval[0] < -PLATEAU_SLOPE_EQUIVALENCE_BAND
+        or equivalence_interval[1] > PLATEAU_SLOPE_EQUIVALENCE_BAND
+        or abs(slope) > PLATEAU_SLOPE_EQUIVALENCE_BAND
+    ):
+        result['reason'] = 'slope_not_equivalent'
+        if review:
+            result.update(status='intervention_review')
+            return result
+        return result
+
+    difficulty_levels = result['difficulty_levels']
+    if unique_item_ratio < PLATEAU_MIN_UNIQUE_ITEM_RATIO:
+        highest_level = max(difficulty_levels, default=1)
+        result.update(
+            reason='low_item_diversity',
+            diagnosis='repeated_item_feed',
+        )
+        if (
+            result['average_score'] >= 70
+            and mean(item['hint_rate'] for item in window) <= 0.15
+        ):
+            diagnosis = 'under_challenged_feed'
+            action = (
+                'increase_difficulty_exposure'
+                if highest_level < 3 else 'alternate_modality'
+            )
+            result.update(
+                status='challenge_exposure_adjustment',
+                diagnosis=diagnosis,
+                intervention_required=True,
+                action=action,
+                escalation_level=0,
+            )
+            if review and review['status'] == 'reviewed':
+                (
+                    result['escalation_level'],
+                    result['diagnosis'],
+                    result['action'],
+                ) = _escalation_for_review(review)
+            result['message'] = _plateau_message(
+                learner.preferences.get('language', 'en'),
+                diagnosis,
+                {'highest_level': highest_level},
+            )
+        else:
+            diagnosis = 'repeated_item_feed'
+            action = 'strategy_suggestion'
+            escalation_level = 0
+            if review and review['status'] == 'reviewed':
+                (
+                    escalation_level,
+                    diagnosis,
+                    action,
+                ) = _escalation_for_review(review)
+            result.update(
+                status='challenge_exposure_adjustment',
+                diagnosis=diagnosis,
+                intervention_required=True,
+                action=action,
+                escalation_level=escalation_level,
+            )
+            result['message'] = _plateau_message(
+                learner.preferences.get('language', 'en'),
+                diagnosis,
+                {},
+            )
+        return result
+
+    if len(difficulty_levels) < PLATEAU_MIN_DIFFICULTY_LEVELS:
+        highest_level = max(difficulty_levels, default=1)
+        if (
+            result['average_score'] >= 70
+            and highest_level < 3
+            and mean(item['hint_rate'] for item in window) <= 0.15
+        ):
+            diagnosis = 'under_challenged_feed'
+            result.update(
+                status='challenge_exposure_adjustment',
+                reason='insufficient_difficulty_exposure',
+                diagnosis=diagnosis,
+                intervention_required=True,
+                action=(
+                    'increase_difficulty_exposure'
+                    if highest_level < 3 else 'alternate_modality'
+                ),
+                escalation_level=0,
+            )
+            result['message'] = _plateau_message(
+                learner.preferences.get('language', 'en'),
+                diagnosis,
+                {},
+            )
+            return result
+        result['reason'] = 'minimum_difficulty_levels'
+        return result
+
+    topic_scores = {}
+    for session in window:
+        for topic, topic_values in session['topics'].items():
+            bucket = topic_scores.setdefault(topic, [])
+            bucket.extend(topic_values)
+    stable_topics = {
+        topic: {
+            'score': round(100 * mean(values), 1),
+            'items': len(values),
+        }
+        for topic, values in topic_scores.items()
+        if len(values) >= 5
+    }
+    sorted_topics = sorted(
+        stable_topics.items(),
+        key=lambda item: (item[1]['score'], item[0]),
+    )
+    topic_gap = (
+        sorted_topics[-1][1]['score'] - sorted_topics[0][1]['score']
+        if len(sorted_topics) >= 2 else 0
+    )
+    result['topic_scores'] = stable_topics
+    result['topic_gap'] = round(topic_gap, 1)
+    if sorted_topics:
+        result['weakest_topic'] = sorted_topics[0][0]
+        result['strongest_topic'] = sorted_topics[-1][0]
+
+    first_two, last_two = window[:2], window[-2:]
+    active_before = [
+        value for session in first_two for value in session['active_ms']
+    ]
+    active_after = [
+        value for session in last_two for value in session['active_ms']
+    ]
+    active_time_drop = (
+        mean(active_after) <= mean(active_before) * 0.75
+        if active_before and active_after else False
+    )
+    rapid_flags = {
+        flag
+        for item in window[-2:]
+        for flag in item['rapid_flags']
+    }
+    average_hint_rate = mean(item['hint_rate'] for item in window)
+    first_hint_rate = mean(item['hint_rate'] for item in first_two)
+    last_hint_rate = mean(item['hint_rate'] for item in last_two)
+    response_before = [
+        item['response_seconds']
+        for item in first_two
+        if item['response_seconds'] is not None
+    ]
+    response_after = [
+        item['response_seconds']
+        for item in last_two
+        if item['response_seconds'] is not None
+    ]
+    response_time_increase = bool(
+        response_before and response_after
+        and mean(response_after) >= mean(response_before) * 1.2
+    )
+    time_values = [
+        item['response_seconds']
+        for item in window
+        if item['response_seconds'] is not None
+    ]
+    reading_values = [
+        item['reading_ratio']
+        for item in window
+        if item['reading_ratio'] is not None
+    ]
+    fast_and_stable = bool(
+        time_values and reading_values
+        and mean(reading_values) <= 1.5
+        and pstdev(time_values) <= max(2, median(time_values) * 0.25)
+    )
+    item_counts = sum(item['reliable_count'] for item in window)
+    distinct_items = sum(item['unique_question_count'] for item in window)
+    hint_change = last_hint_rate - first_hint_rate
+    maximum_level = max(difficulty_levels)
+
+    fast_accurate_fluency_guard = result['average_score'] >= 80
+    disengagement_signal = active_time_drop or bool(rapid_flags)
+    if disengagement_signal and not fast_accurate_fluency_guard:
+        diagnosis = 'disengaged_plateau'
+    elif (
+        35 <= result['average_score'] <= 55
+        and average_hint_rate >= 0.25
+        and (hint_change >= 0.15 or response_time_increase)
+    ):
+        diagnosis = 'frustration_plateau'
+    elif topic_gap >= 40:
+        diagnosis = 'skill_gap_plateau'
+    elif (
+        result['average_score'] >= 90
+        and average_hint_rate <= 0.1
+        and fast_and_stable
+    ):
+        diagnosis = 'mastery_plateau'
+    elif (
+        70 <= result['average_score'] <= 85
+        and average_hint_rate <= 0.1
+        and fast_and_stable
+    ):
+        diagnosis = 'comfort_plateau'
+    else:
+        diagnosis = 'strategy_plateau'
+
+    if diagnosis == 'comfort_plateau':
+        action = (
+            'alternate_modality'
+            if maximum_level >= 3
+            else 'raise_difficulty_and_format'
+        )
+    elif diagnosis == 'frustration_plateau':
+        action = 'reduce_difficulty_scaffold'
+    elif diagnosis == 'skill_gap_plateau':
+        action = 'route_weakest_skill_interleave'
+    elif diagnosis == 'disengaged_plateau':
+        action = 'short_gamified_format'
+    elif diagnosis == 'mastery_plateau':
+        action = 'advance_stretch_activity'
+    else:
+        action = 'strategy_suggestion'
+
+    escalation_level = 0
+    if review and review['status'] == 'reviewed':
+        escalation_level, diagnosis, action = _escalation_for_review(review)
+
+    result.update(
+        detected=True,
+        intervention_required=True,
+        status='plateau_detected',
+        reason='stable_equivalent_slope_and_low_variance',
+        diagnosis=diagnosis,
+        action=action,
+        escalation_level=escalation_level,
+        hint_rate=round(average_hint_rate, 3),
+        hint_rate_change=round(hint_change, 3),
+        response_time_increase=response_time_increase,
+        active_time_drop=active_time_drop,
+        fast_accurate_fluency_guard=fast_accurate_fluency_guard,
+        skip_rate=round(mean(item['skip_rate'] for item in window), 3),
+        item_ids=sorted({
+            question_id
+            for item in window
+            for question_id in item['question_ids']
+        }),
+        rapid_response_flags=sorted(rapid_flags),
+        reliable_item_entropy=round(
+            len({
+                question_id
+                for item in window
+                for question_id in item['question_ids']
+            }) / item_counts,
+            3,
+        )
+        if item_counts else 0,
+    )
+    from .localization import localize_topic
+
+    message_metrics = {
+        **result,
+        'weakest_topic': localize_topic(
+            result.get('weakest_topic', 'this topic'),
+            learner.preferences.get('language', 'en'),
+        ),
+        'strongest_topic': localize_topic(
+            result.get('strongest_topic', 'a stronger topic'),
+            learner.preferences.get('language', 'en'),
+        ),
+    }
+    result['message'] = _plateau_message(
+        learner.preferences.get('language', 'en'),
+        diagnosis,
+        message_metrics,
+    )
+    return result
+
+
+def _normalized_entropy(counts):
+    total = sum(counts.values())
+    if total == 0 or len(counts) < 2:
+        return 0.0
+    entropy = -sum(
+        (count / total) * math.log(count / total)
+        for count in counts.values()
+    )
+    return round(entropy / math.log(len(counts)), 3)
+
+
+def _item_entropy(sessions):
+    difficulty_counts = {}
+    topic_counts = {}
+    item_count = 0
+    question_ids = set()
+    for session in sessions:
+        item_count += session['reliable_count']
+        question_ids.update(session['question_ids'])
+        for level, count in session['difficulty_counts'].items():
+            difficulty_counts[level] = difficulty_counts.get(level, 0) + count
+        for topic, values in session['topics'].items():
+            topic_counts[topic] = topic_counts.get(topic, 0) + len(values)
+
+    return {
+        'reliable_items': item_count,
+        'distinct_question_ratio': round(len(question_ids) / item_count, 3)
+        if item_count else 0,
+        'difficulty_counts': {
+            str(level): count
+            for level, count in sorted(difficulty_counts.items())
+        },
+        'topic_counts': topic_counts,
+        'difficulty_entropy': _normalized_entropy(difficulty_counts),
+        'topic_entropy': _normalized_entropy(topic_counts),
+        'format_entropy': 0.0,
+        'format': 'multiple_choice',
+    }
+
+
+def assessment_delivery_audit(questions):
+    """Record whether a delivered assessment repeats one topic/difficulty run."""
+    maximum_run = 0
+    current_signature = None
+    current_run = 0
+    topic_counts = {}
+    difficulty_counts = {}
+    for question in questions:
+        signature = (
+            question.get('topic'),
+            question.get('difficulty', 'Foundation'),
+            'multiple_choice',
+        )
+        if signature == current_signature:
+            current_run += 1
+        else:
+            current_signature = signature
+            current_run = 1
+        maximum_run = max(maximum_run, current_run)
+        topic_counts[question.get('topic')] = (
+            topic_counts.get(question.get('topic'), 0) + 1
+        )
+        difficulty = question.get('difficulty', 'Foundation')
+        difficulty_counts[difficulty] = difficulty_counts.get(difficulty, 0) + 1
+    unique_question_ratio = (
+        len({question.get('id') for question in questions}) / len(questions)
+        if questions else 0
+    )
+    return {
+        'item_count': len(questions),
+        'unique_question_ratio': round(unique_question_ratio, 3),
+        'max_consecutive_same_topic_difficulty_format': maximum_run,
+        'item_entropy': {
+            'topic': _normalized_entropy(topic_counts),
+            'difficulty': _normalized_entropy(difficulty_counts),
+            'format': 0.0,
+            'question_uniqueness': round(unique_question_ratio, 3),
+        },
+        'format': 'multiple_choice',
+    }
+
+
+def _page_hinkley_shift(sessions):
+    scores = [item['score'] for item in sessions[-10:]]
+    if len(scores) < 7:
+        return False
+    for direction in (1, -1):
+        running_mean = scores[0]
+        cumulative = 0.0
+        for index, score in enumerate(scores[1:], start=1):
+            cumulative = max(
+                0.0,
+                cumulative + direction * (score - running_mean - 1),
+            )
+            running_mean += (score - running_mean) / (index + 1)
+            if cumulative >= 20:
+                return True
+    return False
+
 
 BANK = {
     'ml': [
@@ -25,6 +889,15 @@ BANK = {
     'cyber': [
         q('Access control', 'Authentication answers which question?', ['What can you access?', 'Who are you?', 'Is the service online?', 'Is the file encrypted?'], 1, 'Authentication verifies identity; authorization determines permitted actions.', 'Think about proving identity.'),
         q('Access control', 'Changing an invoice ID reveals another customer’s invoice. Which control is missing?', ['A longer URL', 'Server-side object authorization', 'A different font', 'Client-side hiding'], 1, 'The server must check whether the requester may access that specific invoice.', 'An authenticated user still needs permission for each object.', 'Stretch'),
+        q('Phishing awareness', 'A message unexpectedly asks you to sign in through a link. What is the safest next step?', ['Use a trusted route to check the request and report it through the approved channel', 'Open the link to see where it leads', 'Forward it to coworkers to ask if it is real', 'Reply with account details'], 0, 'Verify unexpected requests through a trusted channel and report suspicious messages using the approved process.', 'Do not use the message itself as the only way to verify its request.'),
+        q('Phishing awareness', 'Which detail can be a reason to verify an email before acting?', ['An unexpected request for urgent account or payment action', 'A familiar sender name by itself', 'A company logo by itself', 'A message arriving during work hours'], 0, 'Unexpected urgency or sensitive requests deserve verification through a trusted route; logos and display names can be misleading.', 'Look for an unexpected request that pressures you to act quickly.'),
+        q('Phishing awareness', 'You receive a suspicious work message with an attachment. What should you do?', ['Avoid opening it and report it using your organization’s approved process', 'Open it on a personal device', 'Send it to a public forum for analysis', 'Reply asking the sender to confirm'], 0, 'Avoid interacting with suspicious attachments and use the organization’s approved reporting process.', 'Choose the response that avoids opening the attachment and uses a trusted reporting route.'),
+        q('Password safety', 'Which practice best protects a personal account from password reuse risks?', ['Use a unique, long password for each account and store it in a trusted password manager', 'Reuse one memorable password everywhere', 'Share a password with a trusted coworker', 'Add the current year to an old password'], 0, 'Unique passwords limit the impact if one service is compromised; a trusted password manager can help manage them.', 'A password exposed on one service should not unlock another.'),
+        q('Password safety', 'A service offers multi-factor authentication. What does enabling it add?', ['A second verification factor in addition to the password', 'A guarantee that no account compromise is possible', 'A replacement for keeping recovery details safe', 'Permission for other users to share the account'], 0, 'Multi-factor authentication adds another proof of identity, though users should still protect credentials and recovery methods.', 'It asks for another kind of proof beyond something you know.'),
+        q('Password safety', 'You think your password may have been exposed. What is a sensible response?', ['Change it through the official service and review account security options', 'Wait until someone reports misuse', 'Send the password to support by email', 'Reuse it with a small change'], 0, 'Use the official service to replace an exposed password and review available account protections.', 'Use a trusted route and do not send the password to anyone.'),
+        q('Encryption basics', 'What does encryption mainly help protect when data is stored or sent?', ['Confidentiality from people who do not have the needed key', 'Availability during every outage', 'Proof that a user has permission to read the data', 'Removal of all copies of the data'], 0, 'Encryption can protect confidentiality, but it does not replace authorization, backups, or availability planning.', 'Think about who can understand protected data without the key.'),
+        q('Encryption basics', 'A team needs to recover protected files later. What must it plan for?', ['Secure, controlled key management and recovery', 'Publishing the keys with the files', 'Using encryption instead of access controls', 'Deleting every backup'], 0, 'Authorized recovery depends on protecting and managing the keys needed to decrypt the files.', 'The right people need reliable access to the keys, while others should not.'),
+        q('Encryption basics', 'Which statement about HTTPS is accurate?', ['It helps protect data in transit, but does not decide which records a user may access', 'It guarantees that every website action is authorized', 'It encrypts files stored on every user device', 'It prevents all misleading messages'], 0, 'HTTPS protects a connection in transit; application authorization and other safeguards remain necessary.', 'Transport protection and permission checks address different risks.'),
         q('Data protection', 'Which is designed to be one-way?', ['Encryption with a key', 'Base64 encoding', 'Cryptographic hashing', 'File compression'], 2, 'Cryptographic hashing is designed to resist inversion; encryption is reversible with a key.', 'Which operation has no decryption key?'),
         q('Data protection', 'What is the best choice here for storing user passwords?', ['Plain text', 'Base64', 'A password hashing scheme such as Argon2 with salts', 'Reversible encryption with a shared key'], 2, 'A dedicated password hashing scheme and salts protect stored password verifiers.', 'Use a scheme designed specifically for passwords.', 'Stretch'),
         q('Secure development', 'Which is the standard defense against SQL injection when inserting user values into a query?', ['String concatenation', 'Parameterized queries', 'Hiding the form', 'Removing spaces'], 1, 'Parameterized queries keep values separate from SQL syntax.', 'Treat input as data rather than query syntax.'),
@@ -291,6 +1164,48 @@ def select_questions(learner, subject, count=6):
     }
     for topic in topic_order[:extra_topic_count]:
         topic_counts[topic] += 1
+    coach_plan = learner.preferences.get('coach_learning_plan', {})
+    if (
+        isinstance(coach_plan, dict)
+        and (
+            coach_plan.get('assessment_pending')
+            or coach_plan.get('path_pending')
+        )
+        and coach_plan.get('focus_topic') in topics
+    ):
+        focus_topic = coach_plan['focus_topic']
+        other_topics = [topic for topic in topic_order if topic != focus_topic]
+        topic_capacity = {
+            topic: sum(item['topic'] == topic for item in bank)
+            for topic in topics
+        }
+        focus_count = min(
+            topic_capacity[focus_topic],
+            count if not other_topics else max(1, round(count * 2 / 3)),
+        )
+        topic_counts = {topic: 0 for topic in topics}
+        topic_counts[focus_topic] = focus_count
+        remaining_count = count - focus_count
+        available_topics = [
+            topic for topic in other_topics
+            if topic_capacity[topic] > 0
+        ]
+        index = 0
+        while remaining_count and available_topics:
+            topic = available_topics[index % len(available_topics)]
+            if topic_counts[topic] < topic_capacity[topic]:
+                topic_counts[topic] += 1
+                remaining_count -= 1
+            else:
+                available_topics.remove(topic)
+                index = 0
+                continue
+            index += 1
+        if remaining_count and topic_counts[focus_topic] < topic_capacity[focus_topic]:
+            topic_counts[focus_topic] += min(
+                remaining_count,
+                topic_capacity[focus_topic] - topic_counts[focus_topic],
+            )
     levels = {'Foundation': 1, 'Building': 2, 'Stretch': 3}
     default_level = {
         'New to this': 1,
@@ -301,12 +1216,21 @@ def select_questions(learner, subject, count=6):
     previous = learner.assessment_set.filter(
         subject=subject, completed_at__isnull=False
     ).order_by('-completed_at').first()
+    plateau = detect_assessment_plateau(learner, subject)
     targets = {}
     for topic in topics:
         target = default_level
+        previous_level = None
         if previous:
-            topic_answers = [
+            reliable_answers = [
                 answer for answer in previous.answers
+                if (
+                    answer.get('validity', 'reliable') == 'reliable'
+                    and not answer.get('hint', False)
+                )
+            ]
+            topic_answers = [
+                answer for answer in reliable_answers
                 if answer.get('topic') == topic
             ]
             topic_accuracy = (
@@ -317,13 +1241,39 @@ def select_questions(learner, subject, count=6):
                 item for item in previous.questions if item.get('topic') == topic
             ]
             if previous_items:
-                target = round(sum(
+                previous_level = round(sum(
                     levels.get(item.get('difficulty'), 1) for item in previous_items
                 ) / len(previous_items))
+                target = previous_level
             if topic_accuracy is not None:
                 target = min(3, target + 1) if topic_accuracy >= .8 else (
                     max(1, target - 1) if topic_accuracy < .5 else target
                 )
+        if learner.preferences.get('assessment_difficulty_boost'):
+            target = min(3, target + 1)
+        if plateau and plateau['intervention_required']:
+            action = plateau['action']
+            if action in (
+                'increase_difficulty_exposure',
+                'raise_difficulty_and_format',
+                'advance_stretch_activity',
+            ):
+                target = min(3, (previous_level or target) + 1)
+            elif action == 'reduce_difficulty_scaffold':
+                target = max(1, (previous_level or target) - 1)
+            elif (
+                action == 'route_weakest_skill_interleave'
+                and topic == plateau.get('weakest_topic')
+            ):
+                target = max(1, (previous_level or target) - 1)
+        if isinstance(coach_plan, dict) and coach_plan.get('assessment_pending'):
+            requested_difficulty = coach_plan.get('difficulty')
+            if requested_difficulty in levels:
+                target = levels[requested_difficulty]
+            elif requested_difficulty == 'harder':
+                target = min(3, target + 1)
+            elif requested_difficulty == 'easier':
+                target = max(1, target - 1)
         targets[topic] = target
 
     topic_options = []
